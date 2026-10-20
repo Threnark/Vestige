@@ -355,12 +355,9 @@ credentials never reach any file.
 
 * **It can only find what your email still remembers.** Deleted welcome emails, services that never emailed
   you, and mail older than your mailbox won't appear.
-* **Accuracy is unproven on real mail.** The pre-filter rules and prompts need tuning against real
-  mailboxes; weaker (especially small local) models make more mistakes. Check confidence scores.
-* **Not yet exercised against real services:** live IMAP servers, the real Anthropic API and third-party
-  OpenAI-compatible APIs were never called during development (they're tested through fakes), and the
-  desktop window hasn't been visually checked on a real display. Please report problems.
-* Email-change detection depends on notices existing and being recognised, and can't resolve an address you
+* **Accuracy is unknown across all AI Models** The pre-filter rules and prompts may need tuning depending on which AI model is being used; weaker models make more mistakes. Check confidence scores. Has been tested using "qwen2.5:14b" with what seems to be good results.
+* **Not yet exercised against all services:** live IMAP servers that have been tested are @gmail.com, @proton.me and a custom domain hosted by PorkBun with an email set up through PurelyMail.
+* **Email-change detection** depends on notices existing and being recognised, and can't resolve an address you
   didn't scan.
 * Python can't guarantee it wipes secrets from RAM (see [Memory](#memory-ram)).
 * **The interface depends on CustomTkinter**, which is a third-party library. When this was written one
@@ -368,8 +365,6 @@ credentials never reach any file.
   before relying on it long-term. Its look lives in one file (`ui_theme.py`), and tables use a restyled
   standard Tk table because CustomTkinter has none. The operating system's own file/folder pickers can't
   be themed, so they appear in the system style.
-* Vestige keeps its optional saved data in a folder called `Vestige_DATA`. If you tried an earlier version
-  in write mode, its `EmailAuditor_DATA` folder is separate and can simply be deleted.
 
 ---
 
