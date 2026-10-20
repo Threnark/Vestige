@@ -19,3 +19,4 @@ libpff-python>=20231205
 
 # Needed for building python scripts into application.
 PyInstaller
+certifi
