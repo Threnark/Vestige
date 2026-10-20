@@ -1,0 +1,41 @@
+# COMMAND-LINE TOOL ONLY. The desktop app doesn't use this file: you type accounts
+# into the app and they are kept in memory only.
+#
+# Copy to accounts.yaml and fill in. No passwords belong in this file: each account
+# names an environment variable, and the value comes from your shell or a .env file
+# that you create and manage yourself.
+#
+# provider: gmail | yahoo | icloud | outlook | other
+#   gmail/yahoo/icloud fill in the IMAP server and default folders for you.
+#   Use "other" and set imap_server for anything else that supports IMAP + app passwords.
+#
+# password_env is OPTIONAL. Leave it out for an account you will only use with
+# `import-mail` (no password needed; reads .pst, .mbox and .eml files). Outlook /
+# Hotmail / Live / MSN accounts can't use IMAP passwords or app passwords any more
+# (Microsoft requires OAuth), so export those to a .pst from Outlook and import that;
+# a password_env on such an account is ignored.
+
+accounts:
+  - name: gmail_personal
+    provider: gmail
+    email: yourname@gmail.com
+    password_env: GMAIL_PERSONAL_APP_PASSWORD
+
+  - name: yahoo_old
+    provider: yahoo
+    email: yourname@yahoo.com
+    password_env: YAHOO_OLD_APP_PASSWORD
+
+  # File-import-only account (no password, no internet needed). Use this for
+  # Outlook / Hotmail:   python main.py import-mail --account outlook_export --file export.pst
+  # - name: outlook_export
+  #   provider: outlook
+  #   email: yourname@outlook.com
+
+  # A provider that needs explicit settings:
+  # - name: fastmail
+  #   provider: other
+  #   email: yourname@fastmail.com
+  #   imap_server: imap.fastmail.com
+  #   password_env: FASTMAIL_APP_PASSWORD
+  #   folders: ["INBOX"]

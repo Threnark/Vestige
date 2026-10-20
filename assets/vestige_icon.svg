@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1080 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#333232}
+      .cls-2{fill:none;stroke:#333131;stroke-width:2;stroke-miterlimit:60}
+      .cls-3{fill:#333232;stroke:#efefef;stroke-width:30;stroke-miterlimit:60}
+      .cls-4{fill:none;stroke:#efefef;stroke-width:30;stroke-miterlimit:60}
+      .cls-5{fill:none;stroke:#8f6c97;stroke-width:30;stroke-miterlimit:60}
+    </style>
+    <mask id="mask-1" maskUnits="userSpaceOnUse" color-interpolation="sRGB" x="-61" y="-61" width="1202" height="1202">
+      <rect x="-61" y="-61" width="1202" height="1202" fill="#fff"/>
+      <path d="M128.471 0 L951.529 0 C1022.482 0 1080 57.518 1080 128.471 L1080 951.529 C1080 1022.482 1022.482 1080 951.529 1080 L128.471 1080 C57.518 1080 0 1022.482 0 951.529 L0 128.471 C0 57.518 57.518 0 128.471 0 Z" fill="#000"/>
+    </mask>
+  </defs>
+  <title>Untitled-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+  </g>
+  <g id="Layer_3" data-name="Layer 3">
+    <g>
+      <path d="M128.471 0 L951.529 0 C1022.482 0 1080 57.518 1080 128.471 L1080 951.529 C1080 1022.482 1022.482 1080 951.529 1080 L128.471 1080 C57.518 1080 0 1022.482 0 951.529 L0 128.471 C0 57.518 57.518 0 128.471 0 Z" class="cls-1"/>
+      <path d="M128.471 0 L951.529 0 C1022.482 0 1080 57.518 1080 128.471 L1080 951.529 C1080 1022.482 1022.482 1080 951.529 1080 L128.471 1080 C57.518 1080 0 1022.482 0 951.529 L0 128.471 C0 57.518 57.518 0 128.471 0 Z" class="cls-2" mask="url(#mask-1)"/>
+    </g>
+  </g>
+  <g id="Layer_2" data-name="Layer 2">
+    <path d="M687.978 507.336 L938.616 507.336 L938.616 991.557 L141.384 991.557 L141.384 507.336 L379.08 507.336" class="cls-3"/>
+    <path d="M135.571 504.556 L390.068 310.028" class="cls-4"/>
+    <path d="M944.935 505.188 L668.764 313.94" class="cls-4"/>
+    <path d="M678.939 432.739 L379.403 537.541 L374.148 693.538 L401.431 67.609 L653.614 137.049 L704.787 690.69 L671.018 340.259 L394.742 210.316" class="cls-5"/>
+    <path d="M141.384 507.336 L536.02 823.028 L938.616 507.336" class="cls-4"/>
+  </g>
+</svg>

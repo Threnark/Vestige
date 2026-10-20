@@ -1,0 +1,21 @@
+# The desktop app's interface (dark, purple look). Needed to run gui_app.py.
+customtkinter>=5.2.0
+pillow>=9.0
+
+# Needed only if you use Anthropic (Claude) as the cloud AI. Skip it if you only use
+# other providers or a local AI: those use the standard library's urllib.
+anthropic>=0.40.0
+
+# Needed only by the command-line tool (main.py) to read accounts.yaml and .env.
+# The desktop app never imports these.
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# Needed only to import Outlook / Hotmail .pst export files (Run Pipeline > Import mail file).
+# Everything else works without it; if it is missing, a .pst import stops with a message
+# explaining how to install it. Pre-built Windows packages exist for current Python versions;
+# on a platform without one, pip has to compile it and needs a C compiler.
+libpff-python>=20231205
+
+# Needed for building python scripts into application.
+PyInstaller
