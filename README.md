@@ -8,13 +8,6 @@ account was changed, so you know where an old account may live now.
 
 It runs on your own computer. Use a **local AI** and nothing at all leaves it.
 
-> **Status, honestly.** The pipeline, AI adapters, matching, progress tracking and export logic are
-> covered by automated tests (`python -m unittest`) using fake AI services and fake mail. It has **not
-> yet been run against a real mailbox or a live AI service**. The dark-purple desktop interface (built with
-> CustomTkinter) was checked by driving its code against a strict stand-in for the toolkit, **not by looking
-> at it on a real screen**, so expect some spacing and layout fixes: send screenshots and they are quick to
-> correct. See [Limitations](#limitations).
-
 ---
 
 ## Contents
@@ -365,12 +358,6 @@ credentials never reach any file.
   before relying on it long-term. Its look lives in one file (`ui_theme.py`), and tables use a restyled
   standard Tk table because CustomTkinter has none. The operating system's own file/folder pickers can't
   be themed, so they appear in the system style.
-
-## License
-
-Copyright © 2026 THRENARK.
-
-This project is licensed under the **GNU General Public License v3.0 (GPL-3.0-or-later)**. See the [LICENSE](LICENSE) file for the full legal text.
 
 ---
 

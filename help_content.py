@@ -7,9 +7,9 @@ content without needing a screen.
 
 HOW THE CONTENT IS BUILT
   A help topic is a title, a one-line summary and a list of BLOCKS. A block is one of
-  the small classes below (Section, Para, Steps, Bullets, Note, Link, Settings). The
-  helper functions at the bottom of each block class (section(), para(), steps(), ...)
-  keep the topic definitions short and readable.
+  the small classes below (Section, Para, Steps, Bullets, Note, Link, Settings, and for
+  the About page Identity and SupportButtons). The helper functions after the block
+  classes (section(), para(), steps(), ...) keep the topic definitions short and readable.
 
 WHERE THE FACTS COME FROM (the rule is: nothing is made up)
   * How Vestige itself behaves is described from the code. Wherever a number or a name
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import app_info
 import module_a_imap
 import module_c_classify
 import module_e_email_changes
@@ -101,6 +102,30 @@ class Settings:
 
 
 @dataclass(frozen=True)
+class Identity:
+    """The card at the top of the About page: the program's name and the lines under it
+    (version, copyright). Shown next to the program icon."""
+    name: str
+    lines: tuple
+
+
+@dataclass(frozen=True)
+class SupportButton:
+    """One way to support the project: a button with a small picture, and a gentle line of
+    explanation. `icon` is the name of a drawn icon (ui_icons.py): "star", "heart" or "coffee"."""
+    icon: str
+    label: str
+    note: str
+    url: str
+
+
+@dataclass(frozen=True)
+class SupportButtons:
+    """A stack of SupportButton items."""
+    items: tuple
+
+
+@dataclass(frozen=True)
 class Topic:
     id: str
     nav: str            # short name in the left-hand list
@@ -119,6 +144,8 @@ def tip(title, text): return Note("tip", title, text)
 def warn(title, text): return Note("warning", title, text)
 def link(label, url): return Link(label, url)
 def settings(title, *rows): return Settings(title, tuple(rows))
+def identity(name, *lines): return Identity(name, tuple(lines))
+def support_buttons(*items): return SupportButtons(tuple(items))
 
 
 # ---------------------------------------------------------------------------
@@ -913,11 +940,49 @@ PRIVACY = Topic(
 )
 
 
+ABOUT = Topic(
+    id="about", nav="About Vestige", title="About Vestige",
+    summary="Who makes it, how it is licensed, and some friendly ways to say thanks.",
+    blocks=(
+        identity(app_info.APP_NAME, f"Version {app_info.VERSION_LABEL}", app_info.COPYRIGHT),
+        section("What Vestige does"),
+        para("Vestige helps you find online accounts you may have forgotten about. It looks through the emails in "
+             "your mailboxes, either directly or from a mail file you export, and works out which messages are "
+             "sign-up confirmations. Then it lists each service with the email address you used and the date "
+             "you signed up."),
+        para("An AI of your choice does the judging, including one that runs entirely on your own computer. "
+             "Vestige keeps nothing on your drive unless you ask it to."),
+        section("License"),
+        para(f"Vestige is open-source software, released under the {app_info.LICENSE_FULL}. In plain terms, you "
+             f"are free to use it, study how it works, share it and change it. If you share a copy, the same "
+             f"license has to come with it, and the source code has to be available."),
+        para("Vestige comes with no warranty. The full license text explains your rights and the terms in detail."),
+        link("Read the full license on GitHub", app_info.LICENSE_URL),
+        section("Say thank you, if you like"),
+        para("Vestige is an independent project. If it has helped you and you would like to say thanks, here are "
+             "a few friendly ways to do it. There is no pressure at all. Vestige works the same for everyone, "
+             "whether or not you ever do any of these."),
+        support_buttons(
+            SupportButton("star", "Star Vestige on GitHub",
+                          "A free way to help. A star can make it easier for other people to find the project.",
+                          app_info.REPO_URL),
+            SupportButton("coffee", "Tip on Ko-fi",
+                          "A small, one-off thank-you, if you feel like it.",
+                          app_info.KOFI_URL),
+            SupportButton("heart", "Sponsor on GitHub",
+                          "Support the project through GitHub Sponsors.",
+                          app_info.SPONSORS_URL),
+        ),
+        para("However you choose to support it, or not at all, thank you for using Vestige."),
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry and navigation
 # ---------------------------------------------------------------------------
 
-TOPICS = {t.id: t for t in (START, GMAIL, YAHOO, ICLOUD, MICROSOFT, OTHER, AI, PIPELINE, RESULTS, PRIVACY)}
+TOPICS = {t.id: t for t in (START, GMAIL, YAHOO, ICLOUD, MICROSOFT, OTHER, AI, PIPELINE, RESULTS, PRIVACY, ABOUT)}
 
 # The left-hand list: (group heading, topic ids in order).
 NAV = (
@@ -925,6 +990,7 @@ NAV = (
     ("Email accounts", ("gmail", "yahoo", "icloud", "microsoft", "other")),
     ("Using Vestige", ("ai", "pipeline", "results")),
     ("Your data", ("privacy",)),
+    ("About", ("about",)),
 )
 
 DEFAULT_TOPIC = "start"
@@ -944,6 +1010,16 @@ def topic_for_account(provider: str, email: str = "", server: str = "") -> str:
     if is_microsoft_mail(email, server):
         return "microsoft"
     return PROVIDER_TOPICS.get(provider, "other")
+
+
+def all_urls() -> list:
+    """Every web address a topic can open, as (topic_id, url): Link blocks and support buttons. Used by the tests."""
+    found = [(topic_id, block.url) for topic_id, block in all_links()]
+    for topic in TOPICS.values():
+        for block in topic.blocks:
+            if isinstance(block, SupportButtons):
+                found.extend((topic.id, item.url) for item in block.items)
+    return found
 
 
 def all_links() -> list:

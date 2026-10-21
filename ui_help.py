@@ -21,7 +21,8 @@ HOW IT BEHAVES
   * Text re-wraps when the window is resized. Pages are rebuilt each time you switch
     topic, which is fast because they are only text.
   * Web links open in the user's normal browser (only https:// addresses), and each
-    link shows its full address and a "Copy link" button.
+    link shows its full address and a "Copy link" button. The support buttons on the About
+    page open their address the same way and also show it in full.
 
 LOOK AND FEEL
   Every colour, font and widget comes from ui_theme.py, the same as the rest of Vestige.
@@ -194,7 +195,8 @@ class HelpWindow(ctk.CTkToplevel):
     def _render(self, page, block) -> None:
         kinds = {content.Section: self._section, content.Para: self._para, content.Steps: self._steps,
                  content.Bullets: self._bullets, content.Note: self._note, content.Link: self._link,
-                 content.Settings: self._settings}
+                 content.Settings: self._settings, content.Identity: self._identity,
+                 content.SupportButtons: self._support_buttons}
         kinds[type(block)](page, block)
 
     def _section(self, page, block) -> None:
@@ -243,6 +245,32 @@ class HelpWindow(ctk.CTkToplevel):
             theme.paragraph(grid, name, muted=True, wraplength=150, bg=theme.CALLOUT_BG).grid(
                 row=row, column=0, sticky="nw", padx=(0, 16), pady=3)
             self._text(grid, value, _INDENT_SETTINGS, bg=theme.CALLOUT_BG).grid(row=row, column=1, sticky="nw", pady=3)
+
+    def _identity(self, page, block) -> None:
+        """The card at the top of the About page: the program icon, its name and the lines under it."""
+        card = ctk.CTkFrame(page, fg_color=theme.CALLOUT_BG, corner_radius=theme.CORNER)
+        card.pack(fill="x", pady=(4, 12))
+        picture = theme.app_icon(72)
+        if picture is not None:                              # no picture is fine; the text is what matters
+            # width/height: a CustomTkinter label is 140 px wide unless told otherwise
+            ctk.CTkLabel(card, text="", image=picture, width=76, height=76).pack(side="left", padx=(20, 4), pady=18)
+        text = theme.frame(card)
+        text.pack(side="left", fill="x", expand=True, padx=(16, 18), pady=16)
+        theme.title(text, block.name).pack(anchor="w")
+        for line in block.lines:
+            self._text(text, line, 150, muted=True, bg=theme.CALLOUT_BG).pack(anchor="w", pady=(2, 0))
+
+    def _support_buttons(self, page, block) -> None:
+        """The ways to say thanks. Each is a button with a small picture, a gentle line saying what it
+        is, and the address it opens in small grey text (so nothing is hidden). They are ordinary
+        buttons: nothing happens until one is clicked."""
+        for item in block.items:
+            holder = theme.frame(page)
+            holder.pack(anchor="w", fill="x", pady=(2, 14))
+            theme.icon_button(holder, item.label, lambda u=item.url: self._open(u),
+                              image=theme.icon(item.icon, 22)).pack(anchor="w")
+            self._text(holder, item.note, _INDENT_STEP, muted=True, small=True).pack(anchor="w", fill="x", pady=(5, 0))
+            self._text(holder, item.url, _INDENT_STEP, muted=True, small=True).pack(anchor="w", fill="x")
 
     def _link(self, page, block) -> None:
         """A clickable link with its address shown underneath and a Copy button."""

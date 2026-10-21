@@ -49,6 +49,7 @@ SCROLL = "#696969"         # scrollbar thumbs
 SCROLL_HOVER = "#8a8a8a"
 TEXT = "#dce4ee"           # normal text
 TEXT_MUTED = "#bebebe"     # secondary text
+FAINT = "#8c8c94"          # the quiet line at the bottom of the main window (still readable: about 5:1 on BG)
 TEXT_DISABLED = "#7d7885"
 CHECK_BORDER = "#666c71"   # check box / radio outline
 ACCENT = "#8f6c97"         # the purple from the app icon: progress fill, ticked boxes
@@ -112,6 +113,7 @@ class Fonts:
         self.tk_body = tkfont.Font(root, family=body, size=10)
         self.tk_small = tkfont.Font(root, family=body, size=9)
         self.tk_link = tkfont.Font(root, family=body, size=10, underline=True)     # web links in the Help window
+        self.tk_small_link = tkfont.Font(root, family=body, size=9, underline=True)  # the small footer link
         self.tab = ctk.CTkFont(family=head, size=15, weight=hw)
         self.heading = ctk.CTkFont(family=head, size=15, weight=hw)
         self.body = ctk.CTkFont(family=body, size=13, weight=bw)
@@ -311,6 +313,50 @@ def page_scroll(parent):
     """A scrolling area with the window's own background (so text blends in), used for Help pages."""
     return ctk.CTkScrollableFrame(parent, fg_color="transparent", corner_radius=0,
                                   scrollbar_button_color=SCROLL, scrollbar_button_hover_color=SCROLL_HOVER)
+
+
+# ---------------------------------------------------------------------------
+# Icons (the About page)
+# ---------------------------------------------------------------------------
+# Soft colours for the three drawn icons (see ui_icons.py): warm gold, rose, cream.
+ICON_COLORS = {"star": "#e0b04b", "heart": "#e58fa8", "coffee": "#e0b98c"}
+_images: dict = {}          # finished images, kept here so they are drawn once and never garbage-collected
+
+
+def icon(name: str, size: int = 22):
+    """A drawn icon ("star", "heart", "coffee") as a CustomTkinter image, or None if it can't be made.
+    Drawn at 4x the display size so it stays sharp at any display scaling. Never raises: a missing
+    illustration must not stop the program or the page it belongs to."""
+    key = (name, size)
+    if key not in _images:
+        try:
+            import ui_icons
+            drawn = ui_icons.make(name, size * 4, ICON_COLORS.get(name, TEXT))
+            _images[key] = ctk.CTkImage(light_image=drawn, dark_image=drawn, size=(size, size))
+        except Exception:
+            _images[key] = None
+    return _images[key]
+
+
+def app_icon(size: int = 64):
+    """The Vestige program icon as a CustomTkinter image, or None if the picture can't be loaded."""
+    key = ("app", size)
+    if key not in _images:
+        try:
+            from PIL import Image
+            picture = Image.open(asset_path("vestige_icon_256.png")).convert("RGBA")
+            _images[key] = ctk.CTkImage(light_image=picture, dark_image=picture, size=(size, size))
+        except Exception:
+            _images[key] = None
+    return _images[key]
+
+
+def icon_button(parent, text: str, command=None, image=None, width: int = 280, height: int = 46):
+    """A larger button with a small picture at its left (the support buttons on the About page).
+    Same colours as every other button; `image` may be None."""
+    return ctk.CTkButton(parent, text=text, command=command, image=image, compound="left", width=width,
+                         height=height, corner_radius=CORNER, border_width=0, fg_color=BUTTON,
+                         hover_color=BUTTON_HOVER, text_color=TEXT, font=F.button, anchor="w")
 
 
 # ---------------------------------------------------------------------------

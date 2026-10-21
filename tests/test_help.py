@@ -46,6 +46,12 @@ def block_strings(topic):
             out.extend([block.title, block.text])
         elif isinstance(block, content.Link):
             out.append(block.label)
+        elif isinstance(block, content.Identity):
+            out.append(block.name)
+            out.extend(block.lines)
+        elif isinstance(block, content.SupportButtons):
+            for item in block.items:
+                out.extend([item.label, item.note, item.url])
         elif isinstance(block, content.Settings):
             out.append(block.title)
             for name, value in block.rows:
@@ -54,7 +60,8 @@ def block_strings(topic):
 
 
 class ContentStructure(unittest.TestCase):
-    REQUIRED = ["start", "gmail", "yahoo", "icloud", "microsoft", "other", "ai", "pipeline", "results", "privacy"]
+    REQUIRED = ["start", "gmail", "yahoo", "icloud", "microsoft", "other", "ai", "pipeline", "results", "privacy",
+                "about"]
 
     def test_every_requested_page_exists(self):
         self.assertEqual(sorted(content.TOPICS), sorted(self.REQUIRED))
@@ -83,9 +90,10 @@ class ContentStructure(unittest.TestCase):
         links = content.all_links()
         self.assertGreater(len(links), 15)
         for topic_id, block in links:
-            self.assertTrue(block.url.startswith("https://"), block.url)
-            self.assertNotIn(" ", block.url)
             self.assertTrue(block.label.strip())
+        for topic_id, url in content.all_urls():                 # Link blocks AND the support buttons
+            self.assertTrue(url.startswith("https://"), url)
+            self.assertNotIn(" ", url)
         for topic in content.TOPICS.values():
             urls = [b.url for b in topic.blocks if isinstance(b, content.Link)]
             self.assertEqual(len(urls), len(set(urls)), f"duplicate link in {topic.id}")

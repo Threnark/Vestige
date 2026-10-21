@@ -45,6 +45,7 @@ import ai_providers as ai
 import db
 import paths
 import ui_dialogs as dialogs
+import ui_footer
 import ui_help as help_ui
 import ui_theme as theme
 from gui_results import ResultsPage
@@ -84,6 +85,10 @@ class App(ctk.CTk):
         self.tabs.pack(side="left", fill="x", expand=True)
         theme.button(header, "?  Help", self.open_help, width=90, height=33).pack(side="left", padx=(8, 0))
         self.bind("<F1>", lambda _event: self.open_help())
+        # The quiet footer ("Support the dev" + version/copyright/licence). It is packed BEFORE the page
+        # area and against the bottom edge, so it keeps its own one-line strip and the pages get the rest.
+        self.footer = ui_footer.Footer(self, on_support=lambda: help_ui.open_help(self, "about"))
+        self.footer.pack(side="bottom", fill="x", padx=16, pady=(0, 6))
         self.host = ctk.CTkFrame(self, fg_color="transparent")
         self.host.pack(fill="both", expand=True)
 
