@@ -3,66 +3,195 @@ name: Build All Platforms
 on:
   push:
     tags:
-      - 'v*' # Triggers automatically when you push a version tag (e.g., v1.0.0)
-  workflow_dispatch: # Allows manual trigger from the Actions tab on GitHub
+      - 'v*'            # a version tag such as v0.1.0 builds AND publishes a release
+  workflow_dispatch:     # the "Run workflow" button on the Actions tab: builds only, publishes nothing
+
+# The default for every job is read-only access to the repository. Only the "release" job
+# below asks for more. (GitHub's default token is read-only for new repositories, which is why
+# creating a release fails unless "contents: write" is requested explicitly.)
+permissions:
+  contents: read
+
+env:
+  # The Python used for the builds. 3.11 and 3.12 have ready-made packages of libpff-python
+  # (the .pst reader) for Windows and macOS. Change it here, in one place, if you need to.
+  PYTHON_VERSION: '3.11'
+  # Make Python use UTF-8 everywhere (Windows otherwise uses a legacy code page for text output).
+  PYTHONUTF8: '1'
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Build, once per operating system
+  # ---------------------------------------------------------------------------
   build:
-    name: Build (${{ matrix.os }})
+    name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
+      fail-fast: false        # if one system fails, let the others finish so you can see all the results
       matrix:
         include:
           - os: ubuntu-latest
+            name: Linux
             asset: Vestige-Linux.tar.gz
           - os: macos-latest
+            name: macOS
             asset: Vestige-macOS.tar.gz
           - os: windows-latest
+            name: Windows
             asset: Vestige-Windows.zip
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Check out the code
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Linux only: the interface library (tkinter) needs the system's Tk files, which the
+      # Linux runner does not always have. Without them the program would be built without a
+      # working window system.
+      - name: Install Tk (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
 
-      - name: Run build script
-        shell: bash
-        run: |
-          # Automatically adapt path separator for Windows vs Unix in your build script if needed
-          if [[ "$OSTYPE" == "msys"* ]]; then
-            sed -i 's/"assets:assets"/"assets;assets"/g' build_mac_linux.sh
-          fi
-          bash build_mac_linux.sh
+          # Everything in requirements.txt EXCEPT libpff-python, which is optional (it only
+          # adds .pst reading) and has no ready-made package for regular Linux: pip would have
+          # to compile it there, and a failure would stop the whole build. So it is installed
+          # separately below, and the build carries on without it if it cannot be installed.
+          grep -v -i '^libpff-python' requirements.txt > requirements-ci.txt
+          python -m pip install -r requirements-ci.txt
 
-      - name: Archive output (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        shell: bash
-        run: |
-          cd dist
-          if [[ "${{ matrix.os }}" == 'macos-latest' ]]; then
-            tar -czf ../${{ matrix.asset }} Vestige.app
+          if python -m pip install "libpff-python>=20231205" && python -c "import pypff"; then
+            echo "HAVE_PST=true" >> "$GITHUB_ENV"
+            echo "libpff-python installed: this build can read .pst files."
           else
-            tar -czf ../${{ matrix.asset }} Vestige
+            echo "HAVE_PST=false" >> "$GITHUB_ENV"
+            echo "::warning title=No .pst support::libpff-python could not be installed on ${{ matrix.name }}, so this build cannot import .pst files. Everything else works."
           fi
 
-      - name: Archive output (Windows)
-        if: matrix.os == 'windows-latest'
+      # Fail early, with a clear message, if something basic is wrong, instead of half way
+      # through a long build.
+      - name: Check the program and its libraries load
+        shell: bash
         run: |
-          cd dist
-          Compress-Archive -Path Vestige -DestinationPath ../${{ matrix.asset }}
+          python --version
+          python -c "import tkinter, customtkinter, PIL, anthropic, certifi; print('tkinter', tkinter.TkVersion, '| customtkinter', customtkinter.__version__)"
+          python -m compileall -q *.py
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ matrix.asset }}
+      # Only for tags: tell the author if the tag and the version shown inside the program
+      # disagree (the version is set in app_info.py). A warning only: the build continues.
+      - name: Check the tag matches the program's version
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          APP_VERSION="$(python -c 'import app_info; print(app_info.VERSION)')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$APP_VERSION" != "$TAG_VERSION" ]; then
+            echo "::warning title=Version mismatch::The tag is $GITHUB_REF_NAME but app_info.py says VERSION = $APP_VERSION, so the program will show v$APP_VERSION."
+          fi
+
+      - name: Build with PyInstaller
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MSYS_NO_PATHCONV: '1'      # stops Git Bash on Windows rewriting paths in the options below
+        run: |
+          # Things that differ between the systems:
+          #   * --add-data uses ';' between the two folder names on Windows and ':' elsewhere
+          #   * the program icon file: .ico on Windows, .icns on macOS, none on Linux
+          case "$RUNNER_OS" in
+            Windows) SEP=';'; ICON='assets/vestige.ico'  ;;
+            macOS)   SEP=':'; ICON='assets/vestige.icns' ;;
+            *)       SEP=':'; ICON=''                    ;;
+          esac
+
+          OPTIONS="--noconfirm --clean --windowed --onedir --name=Vestige"
+          OPTIONS="$OPTIONS --add-data=assets${SEP}assets"
+          OPTIONS="$OPTIONS --collect-all=customtkinter --collect-all=anthropic --collect-all=certifi"
+          if [ -n "$ICON" ]; then
+            OPTIONS="$OPTIONS --icon=$ICON"
+          fi
+          if [ "$HAVE_PST" = "true" ]; then
+            OPTIONS="$OPTIONS --hidden-import=pypff"
+          fi
+
+          echo "python -m PyInstaller $OPTIONS gui_app.py"
+          python -m PyInstaller $OPTIONS gui_app.py
+
+          echo "Built:"
+          ls dist
+
+      # If the build fails, show which modules PyInstaller could not find. This is usually
+      # the quickest way to see what went wrong.
+      - name: Show PyInstaller's warnings (only if the build failed)
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f build/Vestige/warn-Vestige.txt ]; then
+            tail -n 80 build/Vestige/warn-Vestige.txt
+          else
+            echo "No PyInstaller warning file was produced."
+          fi
+
+      - name: Pack the program (Linux and macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            tar -czf "${{ matrix.asset }}" -C dist Vestige.app
+          else
+            tar -czf "${{ matrix.asset }}" -C dist Vestige
+          fi
+          ls -l "${{ matrix.asset }}"
+
+      - name: Pack the program (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/Vestige -DestinationPath "${{ matrix.asset }}" -Force
+          Get-Item "${{ matrix.asset }}"
+
+      # Keep the finished download. The "release" job below collects these, and for test
+      # runs they can be downloaded from the run's summary page (kept for 14 days).
+      - name: Upload the build
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # 2. Publish the release (tags only, and only when all three builds succeeded)
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # needed to create a release and attach files to it
+    steps:
+      - name: Collect the three builds
+        uses: actions/download-artifact@v7
+        with:
+          path: release-files
+          merge-multiple: true      # put all three files in the one folder
+
+      - name: List what will be published
+        run: ls -l release-files
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: release-files/*
+          fail_on_unmatched_files: true
