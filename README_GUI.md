@@ -1,7 +1,8 @@
 # Vestige desktop app guide
 
 The desktop app is the privacy-first way to use Vestige: **nothing is saved unless you choose to** (see
-[Privacy and data handling](README.md#privacy-and-data-handling) in the main README).
+[Privacy and data handling](README.md#privacy-and-data-handling) in the main README). To install it, see
+[Installation](README.md#installation). Inside the app, **? Help** (or F1) opens help for the page you are on.
 
 ## Tour
 
@@ -21,11 +22,12 @@ any typed API key. Nothing here is ever written to disk.
 use an account for **file import** only (.pst, .mbox or .eml; no credentials at all). Outlook / Hotmail / Live accounts can only be used this way, because Microsoft no longer accepts passwords over IMAP.
 
 ### Run Pipeline
-Everything from before is here: *Only mail since*, *Groups per AI request*, *Limit AI to N groups* (the cheap
-test-run option), the tick-box list of accounts to fetch (none ticked = all), the five stage buttons, **Run full
-pipeline**, **Stop**, the status line and the live log. **Run full pipeline never exports.**
+The page has *Only mail since*, *Groups per AI request*, *Limit AI to N groups* (the cheap test-run option), the
+tick-box list of accounts to fetch over IMAP (none ticked = all accounts that have an app password), a button for each
+of steps 1-5 (step 1 is either **Fetch headers (IMAP)** or **Import mail file...**), **Run full pipeline**, **Stop**,
+the status line and the live log. **Run full pipeline never exports.**
 
-**The progress bar** is new:
+**The progress bar:**
 * It shows the step ("Step 3 of 5: Fetching email bodies"), an overall percentage, and a detail line such as
   "412 of 1,380 emails".
 * While a stage doesn't yet know how big its job is (for example a mail file that is still being indexed, or a
@@ -47,7 +49,14 @@ both tables and the export.
 Markdown, optionally add a date/time to file names or use a new dated sub-folder, then **Export now**. Files are
 never overwritten. If you close with results you haven't exported (and write mode is off), the app asks first.
 
-## Building a double-click version
+## Getting a double-click version
+
+Most people should download a ready-made build from the
+[Releases page](https://github.com/Threnark/Vestige/releases); the install steps for Windows, macOS and Linux are in
+the [main README](README.md#installation). Build your own if you have changed the code, or if there is no release
+for your system (for example an Intel Mac).
+
+### Building it yourself
 
 PyInstaller bundles Python and the app into a folder, with the Vestige icon. Build **on the operating system you
 want to run it on**; you can't build a Windows program from a Mac.
@@ -61,30 +70,48 @@ build_windows.bat
 ./build_mac_linux.sh
 ```
 
-Result: a **folder** (`dist\Vestige\` on Windows, `Vestige.app` on macOS). Zip the whole folder to share it. It is
-deliberately a folder and not a single `.exe`: a single-file build unpacks itself into a temporary directory on
-every launch, which doesn't fit an app that tries to leave nothing behind. Write mode's `Vestige_DATA` folder is
-created right beside `Vestige.exe`.
+Result: a **folder** (`dist\Vestige\` on Windows, `dist/Vestige/` on Linux) or an app bundle (`dist/Vestige.app` on
+macOS). Zip or tar the whole thing to share it. It is deliberately a folder and not a single `.exe`: a single-file
+build unpacks itself into a temporary directory on every launch, which doesn't fit an app that tries to leave
+nothing behind. Write mode's `Vestige_DATA` folder is created next to the program: beside `Vestige.exe` on Windows,
+beside the `Vestige` program on Linux, and in the folder that contains `Vestige.app` on macOS.
 
 ### If the build misbehaves
 * **Check which Python is building.** The scripts print it. With a virtual environment active, `python -m
   PyInstaller` uses the environment's Python. The Windows `py` launcher can pick a *different* Python than your
   environment (which can make PyInstaller look for packages in the wrong place), so the scripts avoid it.
 * **Very new Python versions** can lag behind PyInstaller and some libraries. If the build fails or `dist` ends up
-  empty, try a current but established version (for example 3.12 or 3.13) in a fresh virtual environment.
+  empty, try a current but established version (for example 3.11 or 3.12; the release builds use 3.11) in a fresh
+  virtual environment.
 * **Antivirus / SmartScreen.** Freshly built, unsigned programs are often flagged or quarantined, and a quarantined
   build can look like an empty `dist` folder. Add an exclusion for the project folder while building, or check your
   antivirus's quarantine list. "More info -> Run anyway" on first launch is normal for an unsigned app you built.
 * **The icon doesn't show** in the title bar: the app sets it from `assets/`. Make sure the build scripts' `--add-data`
   line ran (the folder `dist\Vestige\_internal\assets` should exist).
-* The packaged program has **not** been built or run in the environment this was written in (no Windows machine or
-  display there), so treat the first build as something to verify.
+
+### Publishing a release (maintainers)
+
+Releases are built by GitHub Actions (`.github/workflows/build-all.yml`). Set `VERSION` in `app_info.py`, then push a
+tag that matches it:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow builds the Windows, macOS and Linux versions with PyInstaller and attaches `Vestige-Windows.zip`,
+`Vestige-macOS.tar.gz` and `Vestige-Linux.tar.gz` to a new GitHub release. It warns if the tag and `VERSION` disagree.
+Running the workflow by hand from the **Actions** tab builds the three files without publishing a release; they can be
+downloaded from the run's summary page for 14 days.
 
 ## Troubleshooting
-* *Text looks cut off, overlaps, or spacing looks wrong* - the interface has been checked in code but not yet on a real
-  screen. Send a screenshot (and your display scaling, e.g. 150%) and it is a quick fix. Layout values are in the
-  `gui_*.py` files; look and feel is in `ui_theme.py`.
-* *"The 'anthropic' package isn't installed"* - `pip install anthropic`, or choose another provider / a local AI.
+* *The program won't open* (Windows "protected your PC", macOS "can't check for malicious software", Linux "GLIBC
+  not found") - see the install steps for your system in the [main README](README.md#installation).
+* *Text looks cut off, overlaps, or spacing looks wrong* - this can depend on your display scaling and fonts. Please
+  [open an issue](https://github.com/Threnark/Vestige/issues) with a screenshot and your scaling (for example 150%).
+  Layout values are in the `gui_*.py` files; look and feel is in `ui_theme.py`.
+* *"The 'anthropic' package isn't installed"* - when running from source, `pip install anthropic` (the release
+  downloads include it), or choose another provider / a local AI.
 * *Local AI: "Couldn't connect"* - the server isn't running (open the Ollama app or run `ollama serve`), or the
   address/port is wrong. *"wasn't found"* - the model name doesn't exist on that server (`ollama list`, or *Find models*).
 * *Batches keep failing with a local model* - lower *Groups per AI request* to 1, or use a more capable model.
