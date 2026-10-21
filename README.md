@@ -1,12 +1,23 @@
 # Vestige
 
-*A vestige is a trace left behind.* Vestige finds the online accounts hiding in your email. It reads the mail you give it, works out
+Vestige finds the online accounts hiding in your email. It reads the mail you give it, works out
 which messages are evidence of a **real account sign-up** (as opposed to newsletters,
 receipts and noise), and produces a table of **Service → email address you used → date →
 category**. It can also spot **possible email changes**: notices that the address on an
 account was changed, so you know where an old account may live now.
 
 It runs on your own computer. Use a **local AI** and nothing at all leaves it.
+
+## Token Usage & Efficiency
+
+> **Designed for Minimal API Cost**  
+> Vestige uses local pre-filtering and character limits to make processing as efficient as possible. The AI never reads your entire inbox, only filtered candidate emails are sent to the model.
+
+* **How It Works:** Your inbox is scanned and filtered locally on your computer for free. The AI is only called for potential account sign-ups and email change notices, reading capped 800-character snippets across samples.
+* **Estimated Usage:** 
+  * **~100 filtered candidate items:** Roughly 75,000–110,000 total tokens.
+  * **~500 filtered candidate items:** Roughly 380,000–550,000 total tokens.
+* **Cost Note:** Actual token counts are estimates and will vary depending on email snippet lengths and which AI model you select.
 
 ---
 
