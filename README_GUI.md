@@ -3,8 +3,6 @@
 The desktop app is the privacy-first way to use Vestige: **nothing is saved unless you choose to** (see
 [Privacy and data handling](README.md#privacy-and-data-handling) in the main README).
 
-Run it from source with `python gui_app.py`, or build a double-click version (below).
-
 ## Tour
 
 ### Setup
@@ -81,12 +79,6 @@ created right beside `Vestige.exe`.
   line ran (the folder `dist\Vestige\_internal\assets` should exist).
 * The packaged program has **not** been built or run in the environment this was written in (no Windows machine or
   display there), so treat the first build as something to verify.
-
-### The icon
-`assets/vestige_icon.svg` is your original. The PNG, `.ico` and `.icns` files are generated from it with
-`python tools/render_icon.py` (needs `matplotlib` and `pillow`); re-run it if you change the SVG. That script only
-understands simple SVG paths (like this icon's); for anything more complex, export a 1024-pixel PNG from your
-design tool instead and use it as `assets/vestige_icon_1024.png`.
 
 ## Troubleshooting
 * *Text looks cut off, overlaps, or spacing looks wrong* - the interface has been checked in code but not yet on a real
