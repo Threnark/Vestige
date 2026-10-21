@@ -5,26 +5,6 @@ The desktop app is the privacy-first way to use Vestige: **nothing is saved unle
 
 Run it from source with `python gui_app.py`, or build a double-click version (below).
 
-## The look
-
-Dark mode only, in the purple palette of the design concept. Colours, sizes and proportions follow your
-screenshot and theme file; what changed is only what had to change to work reliably:
-
-* the concept's exported code had invalid names and a few settings that can't work as written (a font name
-  starting with `@`, which selects a vertical-text font on Windows; single-line fields drawn as multi-line text
-  boxes; padding hard-coded to "centre" things). Those were interpreted, not copied;
-* fonts are chosen from what is actually installed: *Segoe UI Variable Display Semibold* for headings and tabs
-  (falling back to *Segoe UI Semibold*), *Yu Gothic UI Semibold* for body text as designed (falling back to
-  *Segoe UI Semibold*), then a sensible system font on macOS and Linux;
-* the same look is carried across all three pages and the dialogs, so nothing looks like a different program.
-  The only things that keep the operating system's own style are the **file and folder pickers**, which can't be
-  themed.
-
-**Restyling** is a one-file job: every colour, font and widget style is in `ui_theme.py`. The palette constants
-at the top (`BG`, `PANEL`, `BUTTON`, `ACCENT`, ...) change the whole app. One deliberate detail: entry fields, the
-log box and the tables are the neutral greys from your screenshot, as designed. If you'd like them tinted purple
-to match the buttons, change `FIELD`, `TABLE_BG` and `TABLE_HEADER`.
-
 ## Tour
 
 ### Setup
