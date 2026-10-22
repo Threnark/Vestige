@@ -19,6 +19,12 @@ It runs on your own computer. Use a **local AI** and nothing at all leaves it.
   * **~500 candidate groups:** roughly 380,000–550,000 total tokens.
 * **Cost note:** These figures are estimates. Actual token counts vary with email length and the AI model you select, and email-change notices are processed in a separate step that adds to the total. See [Choosing an AI](#choosing-an-ai-cloud-or-local).
 
+## Contributing
+
+To keep development focused during these early releases, external Pull Requests are currently disabled. 
+
+However, user feedback is highly valued! If you find a bug, have trouble parsing a specific mailbox type, or have an idea to improve Vestige, feel free to submit a detailed report on the [Issues](../../issues) page.
+
 ---
 
 ## Contents
