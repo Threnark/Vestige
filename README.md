@@ -25,6 +25,8 @@ To keep development focused during these early releases, external Pull Requests 
 
 However, user feedback is highly valued! If you find a bug, have trouble parsing a specific mailbox type, or have an idea to improve Vestige, feel free to submit a detailed report on the [Issues](../../issues) page.
 
+Please **don't report security problems in a public issue**; see [`SECURITY.md`](SECURITY.md) for how to report them privately.
+
 ---
 
 ## Contents
@@ -75,7 +77,8 @@ memory-only behaviour.
 
 ### What leaves your computer
 * **Your mail provider**, when you fetch over IMAP (an encrypted connection to the server you
-  configured). Importing a mail file (`.pst`, `.mbox`, `.eml`) needs no network at all.
+  configured, whose certificate is verified before your password is sent). Importing a mail file
+  (`.pst`, `.mbox`, `.eml`) needs no network at all.
 * **The AI you chose**, and only that:
   * *Cloud AI:* the text below is sent over the internet to that provider, along with your API
     key. You decide whether you trust them; check their data policy. Use *Local AI* to avoid it.
@@ -118,6 +121,12 @@ the drive until they are overwritten, and on SSDs they can survive longer still.
   `BODY.PEEK`, so nothing is marked as read, moved or deleted; MBOX files are read, never modified.
 * **Use it on your own accounts.** It needs a mailbox's credentials or export file, so it only
   ever sees what someone with that access could already see; it is meant for auditing your own mail.
+* **Verified mail connection.** Vestige checks the mail server's certificate and host name before it sends
+  your password, and refuses a server that fails the check. There is no setting to turn this off.
+* **Private saved files.** On macOS and Linux, write mode's `Vestige_DATA` folder and `session.db` are
+  readable only by your own user account. On Windows they follow the folder's normal permissions. They are
+  not encrypted.
+* **Reporting a security problem.** See [`SECURITY.md`](SECURITY.md).
 
 ---
 
@@ -149,7 +158,8 @@ first time you open them; the steps below show how to continue. Intel Macs have 
 4. If Windows shows **Windows protected your PC**, click **More info**, then **Run anyway**.
 
 If you use write mode, the `Vestige_DATA` folder is created next to `Vestige.exe`, so extract the folder
-somewhere you can write to (for example inside Documents) rather than `C:\Program Files`.
+somewhere you can write to rather than `C:\Program Files`, and preferably not in a folder that syncs to cloud
+storage such as OneDrive (Documents often does), because the saved session contains parts of your email.
 
 #### macOS
 
@@ -157,7 +167,8 @@ Requires an Apple Silicon Mac (M1 or newer).
 
 1. Download `Vestige-macOS.tar.gz` and double-click it to extract `Vestige.app` (or run
    `tar -xzf Vestige-macOS.tar.gz` in Terminal).
-2. Move `Vestige.app` somewhere you are happy to keep it, such as a folder in Documents.
+2. Move `Vestige.app` to a folder you own, preferably one that isn't synced to iCloud Drive or another cloud
+   service (write mode saves parts of your email next to the app).
 3. Double-click `Vestige.app`. If macOS refuses to open it because it can't check the app for malicious software
    (the app is not signed or notarized by Apple), allow it once:
    * Open **System Settings -> Privacy & Security**, scroll down to the *Security* section, click
@@ -186,6 +197,20 @@ Notes:
 * The download is built on a recent Ubuntu release, so it needs a reasonably recent distribution. On an older
   one you may see an error about a missing `GLIBC` version; run from source instead.
 * If you use write mode, the `Vestige_DATA` folder is created inside the extracted `Vestige` folder.
+
+#### Verifying your download
+
+Every release includes a `SHA256SUMS` file listing the expected SHA-256 checksum of each download, so you can
+confirm your copy is complete and unmodified. Download `SHA256SUMS` into the same folder as your download, then:
+
+* **Linux:** `sha256sum -c SHA256SUMS --ignore-missing` (it should print `OK` for your file).
+* **macOS:** `shasum -a 256 Vestige-macOS.tar.gz`, then compare the result with the line for that file in `SHA256SUMS`.
+* **Windows (PowerShell):** `Get-FileHash .\Vestige-Windows.zip -Algorithm SHA256`, then compare the result with the
+  line for that file in `SHA256SUMS` (upper or lower case doesn't matter).
+
+The checksums are published in the same release as the files, so this catches a damaged or altered download but
+does not replace trusting this repository. For full certainty, read the source and build it yourself
+([Option 2](#option-2-run-from-source)).
 
 ### Option 2: Run from source
 
@@ -449,7 +474,10 @@ CustomTkinter and a display are available, and are skipped otherwise). AI servic
 OpenAI-compatible adapter is tested against a small server on localhost), mail by synthetic MBOX/EML files (and, for `.pst`, a stand-in for the libpff library).
 They cover the matching of masked addresses, the AI adapters' fallback/retry behaviour, the pipeline end to
 end, export rules (no overwriting, spreadsheet safety), write-mode save/resume, and the guarantee that
-credentials never reach any file.
+credentials never reach any file. The security tests (`tests/test_security.py`) also check that the mail
+connection refuses a server with an untrusted certificate (using a throw-away local server, when the `openssl`
+tool is installed), that nothing in the code switches certificate checking off, and that saved files are
+private to their owner on macOS and Linux.
 
 ---
 
@@ -458,12 +486,17 @@ credentials never reach any file.
 * **It can only find what your email still remembers.** Deleted welcome emails, services that never emailed
   you, and mail older than your mailbox won't appear.
 * **Accuracy varies by AI model.** The pre-filter rules and prompts may need tuning for the model you use, and weaker models make more mistakes, so check the confidence scores. It has been tested with `qwen2.5:14b`, with results that looked good.
-* **IMAP has only been tested live on a few providers:** `@gmail.com`, `@proton.me`, and a custom domain hosted by PorkBun with email set up through PurelyMail. Other providers that support IMAP with an app password should work but haven't been tried.
+* **IMAP has only been tested live on a few providers:** `@gmail.com` and a custom domain hosted by PorkBun with email set up through PurelyMail. Other providers that support IMAP with an app password should work but haven't been tried.
+* **IMAP needs a verifiable certificate.** A mail server with a self-signed certificate, or one signed by a
+  private authority your computer doesn't trust, is refused. This can include local mail bridges (such as
+  Proton Mail Bridge) until their certificate is trusted by your computer. Add the certificate or its
+  authority to your computer's trusted certificates, or import a mail file instead.
 * **Email-change detection** depends on notices existing and being recognised, and can't resolve an address you
   didn't scan.
 * Python can't guarantee it wipes secrets from RAM (see [Memory](#memory-ram)).
-* **The interface depends on CustomTkinter**, a third-party library that has had few updates in recent years,
-  so check that it is still maintained before relying on it long-term. Its look lives in one file
+* **The interface depends on CustomTkinter**, a third-party library whose releases have been infrequent
+  (5.2.2 in January 2024, then 6.0.0 in June 2026), so check that it is still maintained before relying on it
+  long-term. Its look lives in one file
   (`ui_theme.py`), and tables use a restyled standard Tk table because CustomTkinter has none. The operating
   system's own file/folder pickers can't be themed, so they appear in the system style.
 
@@ -511,5 +544,6 @@ tests/                     unit tests
 requirements.txt           Python packages
 accounts.example.yaml  .env.example                  command-line tool settings (copy and fill in)
 build_windows.bat  build_mac_linux.sh                package the desktop app with PyInstaller
-.github/workflows/build-all.yml                      builds the Windows, macOS and Linux releases
+.github/workflows/build-all.yml                      builds the releases and publishes them with SHA256SUMS
+SECURITY.md                                          how to report a security problem
 ```

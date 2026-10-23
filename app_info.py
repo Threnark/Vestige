@@ -14,7 +14,7 @@ TO RELEASE A NEW VERSION: change VERSION below. Everything that shows the versio
 """
 
 APP_NAME = "Vestige"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 VERSION_LABEL = f"v{VERSION}"                    # how it is written on screen: v0.1.0
 
 AUTHOR = "THRENARK"                              # the copyright holder

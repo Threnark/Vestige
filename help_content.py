@@ -583,9 +583,10 @@ OTHER = Topic(
         ),
         section("What Vestige can and can't connect to"),
         bullets(
-            "Secure connections only. Vestige uses an encrypted IMAP connection (SSL/TLS, normally port 993). "
-            "It can't connect on the older unencrypted port 143, or to servers that start unencrypted and then "
-            "upgrade (STARTTLS).",
+            "Secure connections only. Vestige uses an encrypted IMAP connection (SSL/TLS, normally port 993) and "
+            "checks the server's certificate before it sends your password. It can't connect on the older "
+            "unencrypted port 143, to servers that start unencrypted and then upgrade (STARTTLS), or to a server "
+            "whose certificate it can't verify (for example one with a self-signed certificate).",
             "Username. Vestige signs in with your full email address as the username. If your provider needs a "
             "different username, IMAP sign-in won't work for that account.",
             "Folders. Names must match exactly how your provider writes them. A name with spaces needs double "
@@ -882,8 +883,9 @@ PRIVACY = Topic(
         ),
         section("What leaves your computer"),
         bullets(
-            "Your mail provider: when you use IMAP, Vestige connects over an encrypted (SSL/TLS) connection and "
-            "signs in with your address and app password. Nothing else goes there.",
+            "Your mail provider: when you use IMAP, Vestige connects over an encrypted (SSL/TLS) connection, "
+            "checks the server's certificate, and signs in with your address and app password. Nothing else goes "
+            "there.",
             f"Your AI: with a cloud AI, the sample text described on the “AI: cloud or local” page (up to "
             f"{SIGNUP_SAMPLES} samples per sender, each with the date, the subject and the first {SIGNUP_CHARS} "
             f"characters of text) and your API key are sent over the internet to that company. With a local AI "

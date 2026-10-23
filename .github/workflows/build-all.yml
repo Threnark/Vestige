@@ -44,6 +44,8 @@ jobs:
     steps:
       - name: Check out the code
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false   # the build never pushes, so don't leave the access token on disk
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -99,6 +101,13 @@ jobs:
           if [ "$APP_VERSION" != "$TAG_VERSION" ]; then
             echo "::warning title=Version mismatch::The tag is $GITHUB_REF_NAME but app_info.py says VERSION = $APP_VERSION, so the program will show v$APP_VERSION."
           fi
+
+      # The security checks (the mail server's certificate is verified, saved files are
+      # private, nothing switches certificate checking off) must pass before anything is
+      # built or published.
+      - name: Run the security tests
+        shell: bash
+        run: python -m unittest tests.test_security -v
 
       - name: Build with PyInstaller
         shell: bash
@@ -189,6 +198,14 @@ jobs:
 
       - name: List what will be published
         run: ls -l release-files
+
+      # SHA256SUMS lets anyone check that a download is complete and unmodified. The steps
+      # are in the "Verifying your download" section of README.md.
+      - name: Write the checksums
+        working-directory: release-files
+        run: |
+          sha256sum Vestige-* > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Create the release
         uses: softprops/action-gh-release@v3

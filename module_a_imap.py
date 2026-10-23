@@ -20,6 +20,9 @@ Design notes
     duplicate collapse into one row.
   * A wrong password is reported once, clearly - it is NOT retried (retrying a
     bad login just risks the provider locking the account).
+  * The mail server's TLS certificate AND host name are always verified before the
+    password is sent (see _tls_context). A server that fails the check is refused,
+    clearly reported and not retried. There is deliberately no option to turn this off.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ import email.utils
 import html
 import imaplib
 import re
+import ssl
 import time
 from datetime import timezone
 from html.parser import HTMLParser
@@ -56,10 +60,49 @@ class AccountLoginError(Exception):
 # Connecting
 # ---------------------------------------------------------------------------
 
+def _tls_context() -> ssl.SSLContext:
+    """TLS settings for the mail connection: the server's certificate and host name
+    are always checked, so nobody on the network can pose as the mail server and
+    collect the app password.
+
+    `imaplib.IMAP4_SSL` called WITHOUT a context encrypts the connection but does not
+    check who is on the other end, so a context is always passed in explicitly. The
+    computer's own trusted certificates are used, plus the `certifi` bundle when it is
+    installed, because packaged programs can't always find the system's list.
+    """
+    ctx = ssl.create_default_context()      # CERT_REQUIRED + check_hostname
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+    except Exception:
+        pass                                 # the system's own certificates still apply
+    return ctx
+
+
+def _certificate_message(account: Account, exc: ssl.SSLCertVerificationError) -> str:
+    reason = getattr(exc, "verify_message", "") or getattr(exc, "reason", "") or str(exc)
+    return (
+        f"Vestige could not verify the identity of the mail server for '{account.name}' "
+        f"({account.imap_server}:{account.imap_port}): {reason}.\n"
+        "Your password was NOT sent. Check that the IMAP server name is correct. If you are on "
+        "public or shared Wi-Fi, try another network, because someone may be intercepting the "
+        "connection. If this is your own mail server with a self-signed certificate, add its "
+        "certificate authority to your computer's trusted certificates; Vestige does not skip "
+        "this check."
+    )
+
+
 def connect(account: Account) -> imaplib.IMAP4_SSL:
     if not account.imap_server:
         raise AccountLoginError(f"'{account.name}' has no IMAP server set.")
-    conn = imaplib.IMAP4_SSL(account.imap_server, account.imap_port, timeout=IMAP_TIMEOUT)
+    try:
+        conn = imaplib.IMAP4_SSL(account.imap_server, account.imap_port,
+                                 ssl_context=_tls_context(), timeout=IMAP_TIMEOUT)
+    except ssl.SSLCertVerificationError as exc:
+        # login() is never reached, so the password is never sent to an unverified server.
+        # AccountLoginError is not retried (see _retry).
+        raise AccountLoginError(_certificate_message(account, exc)) from None
     try:
         conn.login(account.email, account.password)
     except imaplib.IMAP4.error as exc:

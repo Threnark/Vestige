@@ -95,6 +95,7 @@ class Session:
                 raise FileExistsError(path)
             delete_session_files(path)
 
+        db.prepare_private_file(path)          # owner-only from the moment it exists
         dest = sqlite3.connect(path, check_same_thread=False)
         dest.row_factory = sqlite3.Row
         try:

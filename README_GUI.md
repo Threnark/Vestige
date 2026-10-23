@@ -95,8 +95,8 @@ Releases are built by GitHub Actions (`.github/workflows/build-all.yml`). Set `V
 tag that matches it:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The workflow builds the Windows, macOS and Linux versions with PyInstaller and attaches `Vestige-Windows.zip`,
@@ -105,6 +105,10 @@ Running the workflow by hand from the **Actions** tab builds the three files wit
 downloaded from the run's summary page for 14 days.
 
 ## Troubleshooting
+* *"Vestige could not verify the identity of the mail server"* - Vestige checks the mail server's certificate before it
+  sends your password, and refused this server. Check the IMAP server name in Setup. On public or shared Wi-Fi,
+  try another network. If it is your own server with a self-signed certificate, add its certificate authority to your
+  computer's trusted certificates (there is deliberately no option to skip the check), or import a mail file instead.
 * *The program won't open* (Windows "protected your PC", macOS "can't check for malicious software", Linux "GLIBC
   not found") - see the install steps for your system in the [main README](README.md#installation).
 * *Text looks cut off, overlaps, or spacing looks wrong* - this can depend on your display scaling and fonts. Please

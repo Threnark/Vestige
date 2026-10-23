@@ -35,6 +35,7 @@ DATA MODEL (schema version 2)
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -153,8 +154,27 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def prepare_private_file(path: str | None) -> None:
+    """Make sure a database file is readable and writable by its owner only (mode 600 on
+    macOS and Linux) BEFORE anything is stored in it, instead of the usual default that
+    lets other users of the computer read it. It holds sender addresses, subjects and
+    parts of email text. Does nothing on Windows (access there follows the folder's
+    permissions) or for an in-memory database, and never raises: this is a best-effort
+    extra protection that must not stop a scan."""
+    if os.name == "nt" or not path or path == ":memory:":
+        return
+    try:
+        if os.path.exists(path):
+            os.chmod(path, 0o600)
+        else:
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except OSError:
+        pass
+
+
 def open_database(path: str | None = None) -> sqlite3.Connection:
     """Open (or create) the database. `path=None` means in-memory only."""
+    prepare_private_file(path)
     conn = sqlite3.connect(path if path else ":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:

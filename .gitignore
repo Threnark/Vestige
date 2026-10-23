@@ -19,3 +19,8 @@ venv/
 build/
 dist/
 *.spec
+
+# Editor / IDE folders (can contain personal paths and settings)
+.vs/
+.vscode/
+.idea/

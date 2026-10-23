@@ -59,11 +59,13 @@ def check_writable(folder: str, create: bool = False) -> tuple:
     network drives. The test file is removed immediately.
 
     `create=True` makes the folder first if it doesn't exist (only used for the
-    write-mode data folder, never for an export folder the user must pick).
+    write-mode data folder, never for an export folder the user must pick). A folder
+    created here is private to its owner (mode 700 on macOS and Linux), because it
+    will hold a database of email details.
     """
     try:
         if create:
-            os.makedirs(folder, exist_ok=True)
+            os.makedirs(folder, mode=0o700, exist_ok=True)
         if not os.path.isdir(folder):
             return False, f"The folder does not exist (or the drive isn't connected):\n{folder}"
         fd, tmp_path = tempfile.mkstemp(prefix=".write_test_", dir=folder)
