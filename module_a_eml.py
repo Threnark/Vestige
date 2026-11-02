@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import email
 import os
+import sqlite3
 
 import jobcontrol
 from models import Account, ImportProblem
@@ -67,21 +68,28 @@ def import_eml(account: Account, paths: list, conn, control=None) -> int:
                 unreadable += 1
                 print(f"  (couldn't read {path}: {exc})")
                 continue
-            msg = email.message_from_bytes(raw)
-            if not msg.get("From"):
-                not_mail += 1                          # not an email (or one with no sender at all)
-                continue
-            row = build_header_row(
-                account, "eml", None,
-                from_raw=_decode_header_value(msg.get("From")),
-                to_raw=_decode_header_value(msg.get("To")),
-                subject=_decode_header_value(msg.get("Subject")),
-                date_raw=msg.get("Date"),
-                message_id=msg.get("Message-ID") or f"<no-id-{account.name}-eml-{path}>",
-                list_unsub=msg.get("List-Unsubscribe"),
-            )
-            if store_message(conn, row, lambda msg=msg: _extract_snippet(msg)):
-                inserted += 1
+            try:
+                msg = email.message_from_bytes(raw)
+                if not msg.get("From"):
+                    not_mail += 1                      # not an email (or one with no sender at all)
+                    continue
+                row = build_header_row(
+                    account, "eml", None,
+                    from_raw=_decode_header_value(msg.get("From")),
+                    to_raw=_decode_header_value(msg.get("To")),
+                    subject=_decode_header_value(msg.get("Subject")),
+                    date_raw=msg.get("Date"),
+                    message_id=msg.get("Message-ID") or f"<no-id-{account.name}-eml-{path}>",
+                    list_unsub=msg.get("List-Unsubscribe"),
+                )
+                if store_message(conn, row, lambda msg=msg: _extract_snippet(msg)):
+                    inserted += 1
+            except (jobcontrol.Cancelled, sqlite3.Error):
+                raise                                  # a stop request or a database problem must still end the job
+            except Exception as exc:                   # one odd file must not stop the whole folder
+                unreadable += 1
+                if unreadable <= 10:
+                    print(f"  (skipped {os.path.basename(path)}: {type(exc).__name__}: {exc})")
             if index % COMMIT_EVERY == 0:
                 conn.commit()
     finally:

@@ -15,12 +15,30 @@ memory use stays small even for a multi-gigabyte export.
 The file is only ever read. (The standard library's mailbox module is told not
 to create a file if the path is wrong, and falls back to read-only when the file
 is on read-only media.)
+
+TWO THINGS THIS MODULE DOES ON PURPOSE (both added after a real 37,000-message
+export stopped at message ~10,000 with "UnicodeDecodeError: 'ascii' codec can't
+decode byte 0xf0"):
+
+  1. Messages are read as RAW BYTES (`get_bytes`), then parsed with the `email`
+     package. The obvious alternative, iterating the mailbox object, makes the
+     standard library decode each message's "From " SEPARATOR line as ASCII. Some
+     exports put a non-ASCII character in that line (for example an emoji or an
+     accented name in the sender part), and a single such message used to abort
+     the whole import. The separator line is never needed, so it is never decoded.
+
+  2. ONE UNREADABLE MESSAGE NEVER STOPS THE IMPORT. If a message can't be read for
+     any reason it is skipped and counted, and the log says which message numbers
+     were skipped so a problem can be tracked down. A stop request (Cancelled) and
+     database errors are NOT swallowed: those must still end the job.
 """
 
 from __future__ import annotations
 
+import email
 import mailbox
 import os
+import sqlite3
 
 import db
 import jobcontrol
@@ -30,6 +48,8 @@ from module_a_imap import _decode_header_value, _extract_snippet, build_header_r
 COMMIT_EVERY = 500
 PROGRESS_EVERY = 5000        # how often a line is printed to the log
 PROGRESS_UI_EVERY = 100      # how often the progress bar is told (it throttles itself too)
+SKIP_DETAILS_SHOWN = 10      # how many skipped messages get their own log line (the rest are only counted)
+SKIP_NUMBERS_SHOWN = 20      # how many skipped message numbers are listed in the summary
 
 
 def import_mbox(account: Account, mbox_path: str, conn, control=None) -> int:
@@ -49,26 +69,38 @@ def import_mbox(account: Account, mbox_path: str, conn, control=None) -> int:
     print(f"  {total:,} messages found")
     jobcontrol.report(control, 0, total, f"0 of {total:,} messages")
     inserted = seen = 0
+    skipped: list = []                     # message numbers (1-based) that could not be read
     try:
-        for index, msg in enumerate(box):
-            jobcontrol.check(control)
+        for index, key in enumerate(box.iterkeys()):
+            jobcontrol.check(control)      # a Stop request ends the job here, outside the try below
             seen += 1
             if seen % PROGRESS_EVERY == 0:
                 print(f"  ... {seen:,} of {total:,} messages read")
             if seen % PROGRESS_UI_EVERY == 0:
                 jobcontrol.report(control, seen, total, f"{seen:,} of {total:,} messages")
 
-            row = build_header_row(
-                account, "mbox", None,
-                from_raw=_decode_header_value(msg.get("From")),
-                to_raw=_decode_header_value(msg.get("To")),
-                subject=_decode_header_value(msg.get("Subject")),
-                date_raw=msg.get("Date"),
-                message_id=msg.get("Message-ID") or f"<no-id-{account.name}-mbox-{index}>",
-                list_unsub=msg.get("List-Unsubscribe"),
-            )
-            if store_message(conn, row, lambda msg=msg: _extract_snippet(msg)):
-                inserted += 1
+            try:
+                # Raw bytes, NOT box[key]: see the module docstring (the separator line is never decoded).
+                msg = email.message_from_bytes(box.get_bytes(key))
+                row = build_header_row(
+                    account, "mbox", None,
+                    from_raw=_decode_header_value(msg.get("From")),
+                    to_raw=_decode_header_value(msg.get("To")),
+                    subject=_decode_header_value(msg.get("Subject")),
+                    date_raw=msg.get("Date"),
+                    message_id=msg.get("Message-ID") or f"<no-id-{account.name}-mbox-{index}>",
+                    list_unsub=msg.get("List-Unsubscribe"),
+                )
+                if store_message(conn, row, lambda msg=msg: _extract_snippet(msg)):
+                    inserted += 1
+            except (jobcontrol.Cancelled, sqlite3.Error):
+                raise                       # a stop request or a database problem must still end the job
+            except Exception as exc:        # anything else wrong with THIS message: skip it, keep going
+                skipped.append(seen)
+                if len(skipped) <= SKIP_DETAILS_SHOWN:
+                    print(f"  skipped message #{seen:,}: {type(exc).__name__}: {exc}")
+                elif len(skipped) == SKIP_DETAILS_SHOWN + 1:
+                    print("  (more messages were skipped; they are counted but not listed one by one)")
             if seen % COMMIT_EVERY == 0:
                 conn.commit()
     finally:
@@ -76,5 +108,10 @@ def import_mbox(account: Account, mbox_path: str, conn, control=None) -> int:
         box.close()
 
     jobcontrol.report(control, total, total, f"{total:,} of {total:,} messages")
-    print(f"  done: {seen} messages read, {inserted} new")
+    note = f", {len(skipped)} skipped (could not be read)" if skipped else ""
+    print(f"  done: {seen} messages read, {inserted} new{note}")
+    if skipped:
+        shown = ", ".join(f"#{n:,}" for n in skipped[:SKIP_NUMBERS_SHOWN])
+        more = f" and {len(skipped) - SKIP_NUMBERS_SHOWN} more" if len(skipped) > SKIP_NUMBERS_SHOWN else ""
+        print(f"  skipped message numbers: {shown}{more}")
     return inserted

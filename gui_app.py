@@ -38,6 +38,7 @@ import os
 import queue
 import sys
 import threading
+import traceback
 
 import customtkinter as ctk
 
@@ -60,6 +61,20 @@ PAGES = ["Setup", "Run Pipeline", "Results"]
 
 # Which Help page the Help button (and the F1 key) opens for each main page.
 PAGE_HELP_TOPICS = {"Setup": "start", "Run Pipeline": "pipeline", "Results": "results"}
+
+
+
+def error_location(exc: BaseException, frames_shown: int = 3) -> str:
+    """Where an unexpected error happened, as the last few steps of the call chain, e.g.
+    'mailbox.py:783 in get_message <- module_a_mbox.py:61 in import_mbox'. It contains only file
+    names, line numbers and function names - never email content - so it is safe to copy into a
+    bug report. It exists because "ERROR: UnicodeDecodeError ..." alone doesn't say which part of
+    the program was running, which made one real bug hard to track down."""
+    try:
+        frames = traceback.extract_tb(exc.__traceback__)[-frames_shown:]
+        return " <- ".join(f"{os.path.basename(f.filename)}:{f.lineno} in {f.name}" for f in reversed(frames))
+    except Exception:
+        return ""
 
 
 class App(ctk.CTk):
@@ -164,6 +179,10 @@ class App(ctk.CTk):
             except Exception as exc:
                 outcome = "problem"
                 print(f"ERROR: {type(exc).__name__}: {exc}")
+                where = error_location(exc)
+                if where:
+                    print(f"  where: {where}")
+                    print("  (If you report this, please include the two lines above. They contain no email content.)")
             else:
                 self.control.progress.finish()
                 print("--- finished ---")
