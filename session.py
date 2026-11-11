@@ -41,7 +41,7 @@ def delete_session_files(db_path: str) -> list:
     """Delete the session database and any SQLite side files. Returns the paths removed.
     NOTE: deleting a file does not securely erase its data from the drive - see
     the 'Privacy and data handling' section of the README."""
-    removed = []
+    removed, failed = [], []
     for suffix in ("", "-journal", "-wal", "-shm"):
         candidate = db_path + suffix
         if os.path.exists(candidate):
@@ -49,7 +49,9 @@ def delete_session_files(db_path: str) -> list:
                 os.remove(candidate)
                 removed.append(candidate)
             except OSError as exc:
-                raise SessionError(f"Couldn't delete {candidate}: {exc}") from None
+                failed.append(f"Couldn't delete {candidate}: {exc}")       # carry on: try the other files too
+    if failed:
+        raise SessionError("\n".join(failed))
     return removed
 
 
@@ -102,7 +104,10 @@ class Session:
             db.copy_database(self.conn, dest)
         except Exception:
             dest.close()
-            delete_session_files(path)
+            try:
+                delete_session_files(path)
+            except SessionError:
+                pass                           # the real problem is the one to report, not a leftover file
             raise
         old, self.conn = self.conn, dest
         old.close()
@@ -111,15 +116,33 @@ class Session:
 
     def disable_write_mode(self, delete_file: bool) -> list:
         """Go back to memory-only. The data is copied back into memory first, so
-        nothing is lost from the current session. Returns the files deleted."""
+        nothing is lost from the current session. Returns the files deleted.
+
+        The session is switched over BEFORE the file is touched. Deleting can fail (on Windows, an
+        antivirus scanner or a cloud-sync app may be holding the file), and when it did, the old
+        order left the session pointing at a closed database with every result in it unreachable.
+        Now the session is always left working: if the file can't be deleted, SessionError says so
+        and says where the file is, and the results are still there."""
         if not self.write_mode:
             return []
         memory = _new_memory_db()
         db.copy_database(self.conn, memory)
-        self.conn.close()
-        removed = delete_session_files(self.db_path) if delete_file else []
+        old, path = self.conn, self.db_path
         self.conn, self.write_mode, self.db_path = memory, False, None
-        return removed
+        try:
+            old.close()
+        except sqlite3.Error:
+            pass                               # the data is already safe in memory
+        if not delete_file:
+            return []
+        try:
+            return delete_session_files(path)
+        except SessionError as exc:
+            raise SessionError(
+                "Write mode is now off and your results are safe in memory, but the saved file could not "
+                f"be deleted.\n\n{exc}\n\nClose anything that may be using it (an antivirus scan, a "
+                "cloud-sync app) and delete it yourself, or use \"Delete saved data\" on the Setup tab "
+                "once it is free.") from None
 
     def resume_from(self, db_path: str) -> None:
         """Continue a previously saved session (write mode on). Raises

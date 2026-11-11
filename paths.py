@@ -114,7 +114,19 @@ def cloud_sync_warning(path: str):
 _BAD_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
+# Windows treats these as devices, not files: a file called "con.csv" or "nul.md" can't be created there
+# (the name means the console, the null device, a serial port...), whatever the extension. They are avoided on
+# every system, since files get copied between computers. COM1-9 and LPT1-9 also come with superscript digits.
+_RESERVED_NAMES = re.compile(r"^(con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(\..*)?$",
+                             re.IGNORECASE)
+MAX_FILENAME_CHARS = 100      # leaves room for the date/time and extension within Windows' 255-character limit
+
+
 def safe_filename(name: str, fallback: str = "signups") -> str:
-    """Make a user-typed file name safe on Windows, macOS and Linux."""
+    """Make a user-typed file name safe on Windows, macOS and Linux: no characters they forbid, no
+    trailing dots or spaces, no Windows device names (con, nul, aux, COM1...) and a sensible length."""
     cleaned = _BAD_FILENAME_CHARS.sub("_", (name or "").strip()).strip(" .")
+    cleaned = cleaned[:MAX_FILENAME_CHARS].strip(" .")
+    if _RESERVED_NAMES.match(cleaned):
+        cleaned = "_" + cleaned
     return cleaned or fallback

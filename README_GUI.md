@@ -7,28 +7,49 @@ The desktop app is the privacy-first way to use Vestige: **nothing is saved unle
 ## Tour
 
 ### Setup
-**Storage.** *Write Mode* is off by default: everything stays in memory and disappears when you close the app.
-Turn it on to save scan progress so a crash or accidental close doesn't waste scanning time and AI cost. You get a
-warning first, listing what will be saved (sensitive results; never passwords, keys or server addresses) and
-where (`Vestige_DATA` next to the program). On close in write mode it asks whether to keep or delete the file;
-next launch it offers to resume a saved session. Deleting is an ordinary delete, not a secure erase (the app says so).
+The page **scrolls**, and each section is its own card. A line at the top says what to do next (add an account, set up the AI, import mail, or go and run) and turns green when you are ready. Top to bottom: Email accounts, AI provider, then Storage.
+
+**Email accounts.** Add as many as you like. An app password is only needed to fetch over IMAP; leave it blank to
+use an account for **file import** only (.pst, .mbox or .eml; no credentials at all). Outlook / Hotmail / Live accounts can only be used this way, because Microsoft no longer accepts passwords over IMAP. **Import mail file...**, beside the account buttons, asks which account the mail belongs to (the one highlighted in the list is offered first) and which file(s) or folder to read. The app then switches to Run Pipeline so you can watch the import.
 
 **AI provider.** Choose **Cloud AI (API key)** or **Local AI (runs on this computer)**. Pick a provider, set the
 server address and model (*Find models* lists what's available), and press *Test connection*. The coloured line
 under the form always states where your data will go (green = stays on this computer). Switching to Local clears
 any typed API key. Nothing here is ever written to disk.
 
-**Email accounts.** Add as many as you like. An app password is only needed to fetch over IMAP; leave it blank to
-use an account for **file import** only (.pst, .mbox or .eml; no credentials at all). Outlook / Hotmail / Live accounts can only be used this way, because Microsoft no longer accepts passwords over IMAP.
+**Storage (optional).** *Write Mode* is off by default: everything stays in memory and disappears when you close the app.
+Turn it on to save scan progress so a crash or accidental close doesn't waste scanning time and AI cost. You get a
+warning first, listing what will be saved (sensitive results; never passwords, keys or server addresses) and
+where (`Vestige_DATA` next to the program). On close in write mode it asks whether to keep or delete the file;
+next launch it offers to resume a saved session. Deleting is an ordinary delete, not a secure erase (the app says so).
 
 ### Run Pipeline
-The page has *Only mail since*, *Groups per AI request*, *Limit AI to N groups* (the cheap test-run option), the
-tick-box list of accounts to fetch over IMAP (none ticked = all accounts that have an app password), a button for each
-of steps 1-5 (step 1 is either **Fetch headers (IMAP)** or **Import mail file...**), **Run full pipeline**, **Stop**,
-the status line and the live log. **Run full pipeline never exports.**
+The page **scrolls**, so everything stays reachable in a small window, and each section is its own card. From the
+top:
+
+* **Fetch mail from your accounts.** A tick-box list of accounts to fetch over IMAP (none ticked = all accounts
+  that have an app password), *Only mail since*, and a switch (**Fetch new mail first**) for whether the full run
+  fetches mail before it starts. Mail files are imported on Setup instead.
+* **What to run.** Tick the pipelines to include: **Sign-ups**, **Email changes**, **Closed accounts**,
+  **Subscriptions** (all four at first). Under the boxes a line says which will run and which are skipped; a
+  skipped pipeline costs nothing, because its emails aren't downloaded or sent to the AI. **Depth** is a
+  three-way switch: **Quick** (cheapest and fastest), **Balanced** (the default) or **Thorough** (most careful). It sets
+  how many sample emails per sender, and how many characters of each, the AI reads.
+* **AI requests.** *Senders per AI request* and *Test run: check only N senders* (the cheap test-run option; it
+  does not limit the Email changes pipeline).
+  The first time you run the AI in a session, if it is not on this computer, a window says where the email text
+  will go and shows these settings; agreeing once covers the rest of the session.
+* **Individual steps.** Folded away until you click **Show steps**. A button for each of steps 1-7 (steps 1-3 are
+  the free ones, step 1 being **Scan mailbox (IMAP)**; steps 4-7 are the four AI pipelines), for running one
+  thing at a time. They use the same depth.
+* **Status and log.** The counters, one row for each pipeline, and the live log. **Drag the bar under the log** up
+  or down to make it taller or shorter; double-click it to reset. The mouse wheel over the log scrolls the log, not
+  the page.
+* **Progress, Run selected pipelines and Stop** are pinned to the bottom of the page, so they stay in view wherever
+  you have scrolled. **Run selected pipelines** runs the free steps, then the ticked pipelines. It never exports.
 
 **The progress bar:**
-* It shows the step ("Step 3 of 5: Fetching email bodies"), an overall percentage, and a detail line such as
+* It shows the step ("Step 3 of 5: Downloading email text"; the number of steps depends on what you ticked), an overall percentage, and a detail line such as
   "412 of 1,380 emails".
 * While a stage doesn't yet know how big its job is (for example a mail file that is still being indexed, or a
   mail server that hasn't said how many messages a folder holds), the bar shows a moving **"working..."**
@@ -36,14 +57,27 @@ the status line and the live log. **Run full pipeline never exports.**
 * It never moves backwards, even if a later folder turns out to hold more mail than first thought; it simply
   pauses until the new total catches up.
 * It is a **general guide, not an exact clock.** Each step of the full pipeline is given an estimated share of the
-  total time (headers 25%, pre-filter 5%, bodies 15%, sign-up AI 40%, email-change AI 15%). Those weights are in
+  total time (scanning the mailbox 25%, shortlisting 5%, downloading text 15%, sign-up AI 40%, email-change AI 15%, closed-account AI 10%,
+  subscription AI 15%; the weights are shared out over the steps you ticked). Those weights are in
   `pipeline.py` (`STAGES`) if you want to tune them. Run a single stage on its own and the bar covers just that stage.
 * If you press **Stop** it reports where it stopped and that everything finished so far is kept.
 
 ### Results
-Two tables: **Sign-ups** (one row per service *and* address) and **Possible email changes**; switch between them
-at the top. Click a column header to sort; double-click a row for the full detail. **Minimum confidence** filters
-both tables and the export.
+Four tables; switch between them at the top:
+
+* **Sign-ups** - one row per service *and* address. **Account check** notes a confirmed closure notice for that
+  service ("Likely closed" / "Possibly closed"); **Activity hint** is a weaker, separate clue ("No mail since
+  2022-03-14") that is never called "closed". The service always stays listed.
+* **Possible email changes** - clues that an account's address was changed.
+* **Closed accounts** - confirmed closure notices, the address each was sent to (**Email Address Used**), and
+  whether the service has emailed since.
+* **Subscriptions** - the address(es) its billing emails reached (**Email Address Used**), plan, status (Active,
+  Possibly stopped, Cancelled, Trial, Unclear), last charge, amount, cycle, next expected charge and cost per
+  month. A line under the table adds up the monthly and yearly cost of the Active ones, per currency.
+
+Click a column header to sort; click a row to see the rest of its detail under the table (for a subscription, the reason for its
+status and the charges for each address). A table wider than the window gets a scroll bar along its bottom edge. **Minimum AI confidence** filters all
+four tables and the export.
 
 **Export:** *Browse...* to a folder (there is no default, so nothing is written until you choose), tick CSV /
 Markdown, optionally add a date/time to file names or use a new dated sub-folder, then **Export now**. Files are
@@ -118,7 +152,8 @@ downloaded from the run's summary page for 14 days.
   downloads include it), or choose another provider / a local AI.
 * *Local AI: "Couldn't connect"* - the server isn't running (open the Ollama app or run `ollama serve`), or the
   address/port is wrong. *"wasn't found"* - the model name doesn't exist on that server (`ollama list`, or *Find models*).
-* *Batches keep failing with a local model* - lower *Groups per AI request* to 1, or use a more capable model.
+* *Batches keep failing with a local model* - lower *Senders per AI request* to 1, or use a more capable model.
 * *"Login failed"* - use an **app password** (not your normal password) and make sure IMAP is enabled; or skip IMAP
   and import a mail file (.pst for Outlook/Hotmail, .mbox, or .eml).
-* *A saved session from an older version* can't be opened; delete it and scan again (it only held scan progress).
+* *A saved session from an older version* is upgraded when it opens, if it can be. If Vestige says it can't open
+  one, delete it and scan again (it only held scan progress).

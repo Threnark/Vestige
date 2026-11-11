@@ -11,12 +11,14 @@ anthropic>=0.40.0
 PyYAML>=6.0
 python-dotenv>=1.0.0
 
-# Needed only to import Outlook / Hotmail .pst export files (Run Pipeline > Import mail file).
+# Needed only to import Outlook / Hotmail .pst export files (Setup > Import mail file).
 # Everything else works without it; if it is missing, a .pst import stops with a message
 # explaining how to install it. Pre-built Windows packages exist for current Python versions;
 # on a platform without one, pip has to compile it and needs a C compiler.
 libpff-python>=20231205
 
-# Needed for building python scripts into application.
-PyInstaller
+# Needed to check the HTTPS certificates of the AI servers the program talks to.
 certifi
+
+# (PyInstaller, which is only needed to build a double-click program yourself, is in
+# requirements-build.txt, so that running the program from source doesn't install it.)

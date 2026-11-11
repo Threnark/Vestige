@@ -12,7 +12,7 @@ class ThemeConstants(unittest.TestCase):
     def test_palette_values_are_valid_hex_colours(self):
         import ui_theme
         for name in ("BG", "PANEL", "BUTTON", "BUTTON_HOVER", "SELECTED", "FIELD", "TABLE_BG", "TABLE_HEADER",
-                     "SCROLL", "TEXT", "TEXT_MUTED", "ACCENT", "CHECK_BORDER"):
+                     "SCROLL", "TEXT", "TEXT_MUTED", "ACCENT", "CHECK_BORDER", "CARD"):
             self.assertRegex(getattr(ui_theme, name), r"^#[0-9a-fA-F]{6}$", name)
         self.assertEqual(set(ui_theme.PRIVACY_COLORS), {"local", "lan", "cloud", "remote"})
 

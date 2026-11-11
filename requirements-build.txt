@@ -1,0 +1,4 @@
+# Only needed to BUILD a double-click program from the source (see README_GUI.md).
+# Running the program from source does not need it: use requirements.txt for that.
+# The GitHub release workflow installs this file as well as requirements.txt.
+PyInstaller

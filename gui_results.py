@@ -3,9 +3,13 @@ gui_results.py
 --------------
 The Results page: what Vestige found, and the only place files get exported.
 
-Two tables share the page (switch with the control at the top):
-  * Sign-ups                - one row per service AND address you used
+Four tables share the page (switch with the control at the top):
+  * Sign-ups                - one row per service AND address you used. Two extra columns carry
+                              notes: "Account check" (a CONFIRMED closure notice) and "Activity
+                              hint" (a weak "no mail since ..." clue that never says "closed").
   * Possible email changes  - clues that an account's address was changed
+  * Closed accounts         - confirmed closure notices, each with a later-mail check
+  * Subscriptions           - recurring charges, whether they still look active, and totals
 
 EXPORT. Nothing is written until you press "Export now". There is no default
 folder: you choose where the files go (for example a drive you trust). Existing
@@ -28,17 +32,37 @@ import ui_help as help_ui
 import ui_theme as theme
 from ui_common import open_folder, sort_tree
 
-SIGNUP_HEADINGS = {"service": "Service Name", "email": "Email Address Used", "date": "Sign-up Date",
-                   "category": "Category", "method": "Sign-up Method", "confidence": "Confidence",
-                   "domain": "Source Domain(s)"}
-SIGNUP_WIDTHS = {"service": 150, "email": 200, "date": 100, "category": 140, "method": 130,
-                 "confidence": 90, "domain": 160}
-CHANGE_HEADINGS = {"service": "Service", "date": "Notice date", "sent_to": "Notice sent to",
-                   "previous": "Previous address", "now": "Account may now use", "match": "Match",
-                   "confidence": "Confidence"}
-CHANGE_WIDTHS = {"service": 130, "date": 100, "sent_to": 170, "previous": 170, "now": 200, "match": 140,
-                 "confidence": 90}
-VIEWS = ["Sign-ups", "Possible email changes"]
+# What each table shows, as (column in the export, heading, width). Every other export column is shown in the
+# panel under the table when a row is clicked, so nothing is lost by keeping the tables narrow.
+SIGNUP_TABLE = (("Service Name", "Service Name", 150), ("Email Address Used", "Email Address Used", 200),
+                ("Sign-up Confirmation Date", "Sign-up Date", 100), ("Account Check", "Account check", 200),
+                ("Activity Hint", "Activity hint", 170), ("Category", "Category", 130),
+                ("Confidence", "Confidence", 90))
+CHANGE_TABLE = (("Service Name", "Service", 130), ("Notice Date", "Notice date", 100),
+                ("Notice Sent To", "Notice sent to", 170), ("Previous Address", "Previous address", 170),
+                ("Account May Now Use", "Account may now use", 200), ("Match", "Match", 140),
+                ("Confidence", "Confidence", 90))
+CLOSED_TABLE = (("Service Name", "Service", 150), ("Email Address Used", "Email Address Used", 200),
+                ("Notice Date", "Notice date", 100), ("Type", "Type", 130), ("Check Result", "Check result", 150),
+                ("Later Mail", "Later mail", 200), ("Confidence", "Confidence", 90))
+SUB_TABLE = (("Service Name", "Service", 150), ("Email Address Used", "Email Address Used", 270),
+             ("Status", "Status", 130), ("Last Charge Amount", "Amount", 100), ("Billing Cycle", "Cycle", 130),
+             ("Last Charge Date", "Last charge", 100), ("Cost Per Month", "Per month", 100),
+             ("Confidence", "Confidence", 90))
+# Export columns holding several values joined with "; ": the panel puts each on its own line.
+LIST_COLUMNS = ("Originally Signed Up With", "Charges By Address")
+DETAIL_HINT = "Click a row to see its details here."
+DETAIL_HEIGHT = 150
+VIEWS = ["Sign-ups", "Possible email changes", "Closed accounts", "Subscriptions"]
+
+# Row colours: words always carry the meaning, the colour only helps the eye.
+_STATE_TAGS = {"Active": "good", "Possibly stopped": "warn", "Cancelled": "dim"}
+
+
+def _table_args(spec: tuple) -> tuple:
+    """(column ids, headings, widths) in the form theme.table wants. The ids are just positions."""
+    ids = tuple(f"c{i}" for i in range(len(spec)))
+    return ids, {i: heading for i, (_, heading, _) in zip(ids, spec)}, {i: width for i, (_, _, width) in zip(ids, spec)}
 
 
 class ResultsPage(ctk.CTkFrame):
@@ -47,19 +71,23 @@ class ResultsPage(ctk.CTkFrame):
         self.app = app
         self._signups: list = []
         self._changes: list = []
+        self._closed: list = []
+        self._subs: list = []
         self.controls: list = []
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)         # the tables take any spare height
+        self.grid_rowconfigure(2, weight=2)         # the tables and the detail panel share any spare height, 2 : 1
+        self.grid_rowconfigure(3, weight=1)         # (and give it up in the same ratio when the window is small)
 
         self._build_top()
         self._build_tables()
+        self._build_detail()
         self._build_export()
 
     # ---- building ---------------------------------------------------------------------------
     def _build_top(self) -> None:
         top = theme.frame(self)
         top.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 6))
-        theme.label(top, "Minimum confidence:").pack(side="left")
+        theme.label(top, "Minimum AI confidence:").pack(side="left")
         self.minconf_var = tk.StringVar(value="0.5")
         theme.entry(top, 64, self.minconf_var).pack(side="left", padx=(8, 12))
         theme.button(top, "Refresh", self.refresh, width=100).pack(side="left")
@@ -78,38 +106,90 @@ class ResultsPage(ctk.CTkFrame):
         host.grid(row=2, column=0, sticky="nsew", padx=20)
         host.grid_columnconfigure(0, weight=1)
         host.grid_rowconfigure(0, weight=1)
+        self.host = host
+        self.notes: list = []                     # the explanatory paragraphs, re-wrapped when the window resizes
+        self.totals_var = tk.StringVar()          # the subscription totals line
 
-        self.signup_view, self.signup_tree = theme.table(host, tuple(SIGNUP_HEADINGS), SIGNUP_HEADINGS,
-                                                         SIGNUP_WIDTHS, height=9)
-        for col in SIGNUP_HEADINGS:
-            self.signup_tree.heading(col, command=lambda c=col: sort_tree(self.signup_tree, c, False))
-        self.signup_tree.bind("<Double-1>", lambda _e: self._detail(self.signup_tree, self._signups,
-                                                                    export.SIGNUP_COLUMNS))
+        # Sign-ups: just the table.
+        ids, headings, widths = _table_args(SIGNUP_TABLE)
+        self.signup_view, self.signup_tree = theme.table(host, ids, headings, widths, height=9)
+        self._wire(self.signup_tree, SIGNUP_TABLE, self._signups_rows, export.SIGNUP_COLUMNS)
         self.signup_view.grid(row=0, column=0, sticky="nsew")
 
-        self.change_view = theme.frame(host)
-        self.change_view.grid_columnconfigure(0, weight=1)
-        self.change_view.grid_rowconfigure(1, weight=1)
-        self.change_note = theme.paragraph(
-            self.change_view,
+        # The other three: a short note above the table.
+        self.change_view, self.change_tree = self._noted_table(
             "POSSIBLE email changes, based on notices that an account's email address was changed. They are clues, "
             "not proof: a masked address (like j***@gmail.com) is only matched against addresses found in the mail "
-            "you scanned. Double-click a row for the full explanation.", small=True, muted=True, wraplength=820)
-        self.change_note.grid(row=0, column=0, sticky="w", pady=(0, 6))
-        container, self.change_tree = theme.table(self.change_view, tuple(CHANGE_HEADINGS), CHANGE_HEADINGS,
-                                                  CHANGE_WIDTHS, height=8)
+            "you scanned. Click a row to read the full explanation.",
+            CHANGE_TABLE, self._changes_rows, export.CHANGE_COLUMNS)
+        self.closed_view, self.closed_tree = self._noted_table(
+            "POSSIBLY closed accounts, each based on an email that says the account was closed, deactivated or "
+            "deleted. \u201cLikely closed\u201d: nothing has arrived from that sender since. \u201cPossibly closed\u201d: "
+            "it has emailed again, which may be marketing or a reopened account. The email address is the one the "
+            "notice was sent to. Click a row for details.",
+            CLOSED_TABLE, self._closed_rows, export.CLOSED_COLUMNS)
+        self.sub_view, self.sub_tree = self._noted_table(
+            "Subscriptions and whether they still seem to be running. The status is a best guess from the emails "
+            "Vestige could see: a deleted receipt looks like a missed payment. A sender is one row, so if several of "
+            "your addresses got its billing emails they are all listed. Click a row for the reason and the charges "
+            "for each address.",
+            SUB_TABLE, self._subs_rows, export.SUBSCRIPTION_COLUMNS, totals=True)
+        for tag in ("good", "warn", "dim"):
+            self.sub_tree.tag_configure(tag, foreground=theme.ROW_COLORS[tag])
+        self.signup_tree.tag_configure("flag", foreground=theme.ROW_COLORS["warn"])
+
+        self.views = {VIEWS[0]: self.signup_view, VIEWS[1]: self.change_view,
+                      VIEWS[2]: self.closed_view, VIEWS[3]: self.sub_view}
+        for name, view in self.views.items():
+            view.grid(row=0, column=0, sticky="nsew")
+            if name != VIEWS[0]:
+                view.grid_remove()                # hidden until selected
+        host.bind("<Configure>", lambda e: [n.configure(wraplength=max(300, e.width - 20)) for n in self.notes])
+
+    def _noted_table(self, note: str, spec: tuple, rows_of, columns: list, totals: bool = False):
+        """A view made of an explanatory note, a table, and (optionally) a totals line."""
+        view = theme.frame(self.host)
+        view.grid_columnconfigure(0, weight=1)
+        view.grid_rowconfigure(1, weight=1)
+        paragraph = theme.paragraph(view, note, small=True, muted=True, wraplength=820)
+        paragraph.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.notes.append(paragraph)
+        ids, headings, widths = _table_args(spec)
+        container, tree = theme.table(view, ids, headings, widths, height=8)
         container.grid(row=1, column=0, sticky="nsew")
-        for col in CHANGE_HEADINGS:
-            self.change_tree.heading(col, command=lambda c=col: sort_tree(self.change_tree, c, False))
-        self.change_tree.bind("<Double-1>", lambda _e: self._detail(self.change_tree, self._changes,
-                                                                    export.CHANGE_COLUMNS))
-        self.change_view.grid(row=0, column=0, sticky="nsew")
-        self.change_view.grid_remove()                # hidden until selected
-        host.bind("<Configure>", lambda e: self.change_note.configure(wraplength=max(300, e.width - 20)))
+        self._wire(tree, spec, rows_of, columns)
+        if totals:
+            line = theme.paragraph(view, textvariable=self.totals_var, wraplength=820)
+            line.grid(row=2, column=0, sticky="w", pady=(8, 0))
+            self.notes.append(line)
+        return view, tree
+
+    def _wire(self, tree, spec: tuple, rows_of, columns: list) -> None:
+        """Click a heading to sort; click a row to see the rest of its details under the table."""
+        for i in range(len(spec)):
+            tree.heading(f"c{i}", command=lambda c=f"c{i}", t=tree: sort_tree(t, c, False))
+        tree.bind("<<TreeviewSelect>>", lambda _e: self._show_detail(tree, rows_of(), spec, columns))
+
+    def _signups_rows(self) -> list:
+        return self._signups
+
+    def _changes_rows(self) -> list:
+        return self._changes
+
+    def _closed_rows(self) -> list:
+        return self._closed
+
+    def _subs_rows(self) -> list:
+        return self._subs
+
+    def _build_detail(self) -> None:
+        self.detail_box = theme.textbox(self, height=DETAIL_HEIGHT)
+        self.detail_box.grid(row=3, column=0, sticky="nsew", padx=20, pady=(8, 0))
+        self._set_detail(DETAIL_HINT)
 
     def _build_export(self) -> None:
         box = theme.frame(self)
-        box.grid(row=3, column=0, sticky="ew", padx=20, pady=(12, 14))
+        box.grid(row=4, column=0, sticky="ew", padx=20, pady=(12, 14))
         box.grid_columnconfigure(1, weight=1)
         help_ui.heading(box, "Export (nothing is written until you click Export now)", "results").grid(
             row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
@@ -145,12 +225,12 @@ class ResultsPage(ctk.CTkFrame):
 
     # ---- showing results -----------------------------------------------------------------------
     def _show_view(self, value: str) -> None:
-        if value == VIEWS[0]:
-            self.change_view.grid_remove()
-            self.signup_view.grid()
-        else:
-            self.signup_view.grid_remove()
-            self.change_view.grid()
+        for name, view in self.views.items():
+            if name == value:
+                view.grid()
+            else:
+                view.grid_remove()
+        self._set_detail(DETAIL_HINT)
 
     def min_confidence(self) -> float:
         try:
@@ -162,28 +242,52 @@ class ResultsPage(ctk.CTkFrame):
         if self.app.busy:                       # the job thread owns the database right now
             return
         conn = self.app.session.conn
-        self._signups = export.build_signup_rows(conn, self.min_confidence())
-        self._changes = export.build_change_rows(conn, self.min_confidence())
-        for tree in (self.signup_tree, self.change_tree):
-            for item in tree.get_children():
-                tree.delete(item)
-        for i, r in enumerate(self._signups):
-            self.signup_tree.insert("", "end", iid=str(i), values=(
-                r["Service Name"], r["Email Address Used"], r["Sign-up Confirmation Date"], r["Category"],
-                r["Sign-up Method"], r["Confidence"], r["Source Domain(s)"]))
-        for i, r in enumerate(self._changes):
-            self.change_tree.insert("", "end", iid=str(i), values=(
-                r["Service Name"], r["Notice Date"], r["Notice Sent To"], r["Previous Address"],
-                r["Account May Now Use"], r["Match"], r["Confidence"]))
-        self.count_var.set(f"{len(self._signups)} service/address rows   |   "
-                           f"{len(self._changes)} possible email changes")
+        confidence = self.min_confidence()
+        self._signups = export.build_signup_rows(conn, confidence)
+        self._changes = export.build_change_rows(conn, confidence)
+        self._closed = export.build_closed_rows(conn, confidence)
+        self._subs, _records, totals_line = export.subscription_table(conn, confidence)
+        self._fill(self.signup_tree, SIGNUP_TABLE, self._signups, lambda r: "flag" if r["Account Check"] else None)
+        self._fill(self.change_tree, CHANGE_TABLE, self._changes)
+        self._fill(self.closed_tree, CLOSED_TABLE, self._closed)
+        self._fill(self.sub_tree, SUB_TABLE, self._subs, lambda r: _STATE_TAGS.get(r["Status"]))
+        self._set_detail(DETAIL_HINT)
+        self.totals_var.set(totals_line or "No subscriptions found yet.")
+        self.count_var.set(f"{len(self._signups)} sign-ups   |   {len(self._changes)} email changes   |   "
+                           f"{len(self._closed)} closed   |   {len(self._subs)} subscriptions")
 
-    def _detail(self, tree, rows: list, columns: list) -> None:
-        sel = tree.selection()
-        if not sel:
+    @staticmethod
+    def _fill(tree, spec: tuple, rows: list, tag_of=None) -> None:
+        """Replace a table's rows. A row's id is its position in `rows`, which stays true after sorting."""
+        for item in tree.get_children():
+            tree.delete(item)
+        for i, row in enumerate(rows):
+            tag = tag_of(row) if tag_of else None
+            tree.insert("", "end", iid=str(i), tags=(tag,) if tag else (),
+                        values=tuple(row[column] for column, _, _ in spec))
+
+    def _show_detail(self, tree, rows: list, spec: tuple, columns: list) -> None:
+        """Show under the table everything the export holds for the selected row that the table doesn't."""
+        selected = tree.selection()
+        if not selected:
             return
-        row = rows[int(sel[0])]
-        dialogs.showinfo(row["Service Name"], "\n\n".join(f"{c}:\n{row[c]}" for c in columns))
+        row = rows[int(selected[0])]
+        shown = {column for column, _, _ in spec}
+        lines = [row["Service Name"]]
+        for column in columns:
+            if column in shown:
+                continue
+            value = row[column]
+            if column in LIST_COLUMNS and "; " in value:
+                value = "\n    " + value.replace("; ", "\n    ")
+            lines.append(f"{column}: {value}")
+        self._set_detail("\n".join(lines))
+
+    def _set_detail(self, text: str) -> None:
+        self.detail_box.configure(state="normal")
+        self.detail_box.delete("1.0", "end")
+        self.detail_box.insert("1.0", text)
+        self.detail_box.configure(state="disabled")
 
     # ---- export ----------------------------------------------------------------------------------
     def set_busy_state(self, busy: bool) -> None:
@@ -213,7 +317,7 @@ class ResultsPage(ctk.CTkFrame):
                                        add_timestamp=self.stamp_var.get(), use_subfolder=self.sub_var.get(),
                                        min_confidence=self.min_confidence())
         conn = self.app.session.conn
-        self.app.set_busy(True)
+        self.app.set_busy(True, stoppable=False)          # an export can't be interrupted: keep Stop greyed out
 
         def work():
             try:

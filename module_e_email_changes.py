@@ -29,29 +29,28 @@ it may be missing, deleted, or silent about the new address.
 
 from __future__ import annotations
 
+import ai_batches
 import ai_providers as ai
 import db
 import jobcontrol
 import migration_matcher as matcher
+import run_options
 from prompts.email_change_prompt import CHANGE_TOOL, ENUM_FALLBACKS, ESSENTIAL_KEYS, SYSTEM_PROMPT
 
-SNIPPET_CHARS_SENT = 800       # masked addresses can sit a little way into the body
+SNIPPET_CHARS_SENT = run_options.BALANCED.change_chars   # masked addresses can sit a little way into the body
 MAX_TOKENS = 2500
-ABORT_AFTER_FAILED_BATCHES = 3
+_one_line = ai_batches.one_line        # flattens untrusted email text before it goes into the prompt
 
 
-def _one_line(text, limit: int) -> str:
-    return " ".join((text or "").split())[:limit]
-
-
-def build_user_message(batch: list) -> str:
+def build_user_message(batch: list, depth=None) -> str:
+    chars = run_options.get_depth(depth).change_chars
     lines = []
     for row in batch:
         lines.append(f"### EMAIL id={row['id']}")
         lines.append(f"from: {_one_line(row['sender_raw'], 120)}")
         lines.append(f"date: {row['date_iso'] or row['date_raw'] or 'unknown'}")
         lines.append(f'subject: "{_one_line(row["subject"], 200)}"')
-        lines.append(f"body_snippet: {_one_line(row['body_snippet'], SNIPPET_CHARS_SENT)}")
+        lines.append(f"body_snippet: {_one_line(row['body_snippet'], chars)}")
         lines.append("")
     return "\n".join(lines)
 
@@ -88,10 +87,11 @@ def _record_for(row, ai_result: dict, known: set) -> dict:
 
 
 def detect_changes(conn, provider: "ai.AIProvider", extra_known_addresses=(),
-                   batch_size: int = 5, control=None) -> dict:
+                   batch_size: int = 5, control=None, depth=None) -> dict:
     """Examine every not-yet-examined change notice. `extra_known_addresses` are
     the configured mailbox addresses (they count as 'known' even if no scanned
     email happened to be addressed to them)."""
+    depth = run_options.get_depth(depth)
     pending = db.change_notices_pending(conn)
     if not pending:
         print("No email-change notices to examine.")
@@ -99,40 +99,18 @@ def detect_changes(conn, provider: "ai.AIProvider", extra_known_addresses=(),
         return {"notices": 0, "changes_found": 0, "requests": 0}
 
     known = db.known_addresses(conn) | {a.strip().lower() for a in extra_known_addresses if a}
-    batch_size = max(1, int(batch_size))
-    total_batches = -(-len(pending) // batch_size)
-    where = "on this computer" if provider.is_local else "over the internet"
-    print(f"{len(pending)} possible email-change notices to examine "
-          f"(~{total_batches} requests, sent {where}).")
-    jobcontrol.report(control, 0, total_batches, f"0 of {total_batches} requests")
+    found = 0
 
-    found = requests = consecutive_failures = 0
-    for start in range(0, len(pending), batch_size):
-        jobcontrol.check(control)
-        batch = pending[start:start + batch_size]
-        requests += 1
-        try:
-            results = provider.structured_call(
-                SYSTEM_PROMPT, build_user_message(batch), CHANGE_TOOL,
-                essential=ESSENTIAL_KEYS, fallbacks=ENUM_FALLBACKS, max_tokens=MAX_TOKENS)
-        except ai.ProviderFormatError as exc:
-            consecutive_failures += 1
-            print(f"  batch {requests}/{total_batches} skipped: {exc}")
-            jobcontrol.report(control, requests, total_batches, f"{requests} of {total_batches} requests")
-            if consecutive_failures >= ABORT_AFTER_FAILED_BATCHES:
-                raise ai.ProviderError(
-                    f"The AI failed {ABORT_AFTER_FAILED_BATCHES} batches in a row, so I stopped. "
-                    f"Try a smaller batch size or a more capable model. "
-                    f"Everything finished so far is kept.") from None
-            continue
-        consecutive_failures = 0
-
+    def save(batch: list, results: list) -> int:
+        """Store the answers; return how many notices received one."""
+        nonlocal found
         by_id = {}
         for r in results:
             try:
                 by_id[int(r.get("email_id"))] = r
             except (TypeError, ValueError):
                 continue
+        answered = 0
         for row in batch:
             r = by_id.get(row["id"])
             if r is None:
@@ -140,8 +118,13 @@ def detect_changes(conn, provider: "ai.AIProvider", extra_known_addresses=(),
             record = _record_for(row, r, known)
             db.save_email_change(conn, record)
             found += bool(record["is_email_change"])
-        print(f"  request {requests}/{total_batches} done")
-        jobcontrol.report(control, requests, total_batches, f"{requests} of {total_batches} requests")
+            answered += 1
+        return answered
 
+    stats = ai_batches.run_batches(
+        provider, pending, batch_size=batch_size, build_message=lambda b: build_user_message(b, depth),
+        tool=CHANGE_TOOL, essential=ESSENTIAL_KEYS, fallbacks=ENUM_FALLBACKS, system_prompt=SYSTEM_PROMPT,
+        max_tokens=MAX_TOKENS, save=save, noun="email-change notices", verb="examine", done="examined",
+        control=control)
     print(f"{found} possible email change(s) found.")
-    return {"notices": len(pending), "changes_found": found, "requests": requests}
+    return {"notices": len(pending), "changes_found": found, "requests": stats["requests"]}

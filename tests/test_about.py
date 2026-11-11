@@ -55,7 +55,7 @@ def about_text() -> str:
 class AppInfo(unittest.TestCase):
     def test_the_facts_are_exactly_what_the_author_gave(self):
         self.assertEqual(app_info.APP_NAME, "Vestige")
-        self.assertEqual(app_info.VERSION_LABEL, "v0.1.0")
+        self.assertEqual(app_info.VERSION_LABEL, "v0.3.0")
         self.assertEqual(app_info.COPYRIGHT, "Copyright \u00a9 2026 THRENARK")
         self.assertEqual(app_info.LICENSE_FULL, "GNU General Public License v3.0 (GPLv3)")
         self.assertEqual(app_info.LICENSE_URL, "https://github.com/Threnark/Vestige/blob/main/LICENSE")
@@ -68,7 +68,7 @@ class AppInfo(unittest.TestCase):
         self.assertEqual(app_info.VERSION_LABEL, "v" + app_info.VERSION)
 
     def test_footer_text_has_name_version_holder_and_licence(self):
-        for part in ("Vestige v0.1.0", "THRENARK", "2026", "GPLv3"):
+        for part in ("Vestige v0.3.0", "THRENARK", "2026", "GPLv3"):
             self.assertIn(part, app_info.FOOTER_TEXT)
         self.assertNotIn("\n", app_info.FOOTER_TEXT)                 # one quiet line
 
@@ -94,7 +94,7 @@ class AboutContent(unittest.TestCase):
     def test_it_lists_name_version_and_copyright(self):
         (card,) = self.blocks(content.Identity)
         self.assertEqual(card.name, "Vestige")
-        self.assertEqual(card.lines, ("Version v0.1.0", "Copyright \u00a9 2026 THRENARK"))
+        self.assertEqual(card.lines, ("Version v0.3.0", "Copyright \u00a9 2026 THRENARK"))
 
     def test_it_describes_the_application(self):
         text = about_text()
@@ -211,7 +211,7 @@ class FooterAndAboutWindow(unittest.TestCase):
     def test_about_page_shows_everything(self):
         win = self.env.help_ui.open_help(self.env.root, "about")
         shown = " ".join(win.texts())
-        self.assertIn("Version v0.1.0", shown)
+        self.assertIn("Version v0.3.0", shown)
         self.assertIn("Copyright \u00a9 2026 THRENARK", shown)
         self.assertIn("GNU General Public License v3.0 (GPLv3)", shown)
         self.assertEqual(win._nav_buttons["about"].kw["fg_color"], self.env.theme.SELECTED)

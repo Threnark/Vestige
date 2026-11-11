@@ -5,8 +5,9 @@ Module C: asks the configured AI (cloud OR local - this file doesn't care which)
 whether each group of candidate emails is evidence of a real account sign-up.
 
 What is sent to the AI, and nothing more, for every group:
-    the sender domain, and for up to 3 sample emails: date, subject and the first
-    SNIPPET_CHARS_SENT characters of the body text.
+    the sender domain, and for a few sample emails: date, subject and the first
+    few hundred characters of the body text. How many samples and how many characters is
+    the DEPTH setting (run_options.py); the default, Balanced, is 3 emails of 400 characters.
 Your email addresses, the full emails and your other mail are never sent.
 
 Cost / time control, in order of effect:
@@ -23,31 +24,31 @@ from __future__ import annotations
 import ai_providers as ai
 import db
 import jobcontrol
+import run_options
+import ai_batches
 from module_b_prefilter import build_groups
 from prompts.classification_prompt import CLASSIFY_TOOL, ENUM_FALLBACKS, ESSENTIAL_KEYS, SYSTEM_PROMPT
 
-MAX_SAMPLES_PER_GROUP = 3
-SNIPPET_CHARS_SENT = 400
+# The default (Balanced) depth. Other depths are in run_options.py.
+MAX_SAMPLES_PER_GROUP = run_options.BALANCED.signup_samples
+SNIPPET_CHARS_SENT = run_options.BALANCED.signup_chars
 MAX_TOKENS = 3000
-ABORT_AFTER_FAILED_BATCHES = 3       # stop wasting time/money if the model keeps failing
+_one_line = ai_batches.one_line        # flattens untrusted email text before it goes into the prompt
 
 
-def _one_line(text, limit: int) -> str:
-    """Flatten whitespace so untrusted text can't break the prompt's layout."""
-    return " ".join((text or "").split())[:limit]
-
-
-def build_user_message(batch: list) -> str:
-    """Render a batch of groups as the plain-text prompt body."""
+def build_user_message(batch: list, depth=None) -> str:
+    """Render a batch of groups as the plain-text prompt body. `depth` (run_options.py) sets
+    how many sample emails and how many characters of each are included."""
+    depth = run_options.get_depth(depth)
     lines = []
     for group in batch:
         tag = (" (identity-provider notification: the real app name is in the text)"
                if group.is_identity_provider else "")
         lines.append(f"### GROUP: {group.key}{tag}")
-        for idx, row in enumerate(group.samples[:MAX_SAMPLES_PER_GROUP]):
+        for idx, row in enumerate(group.samples[:depth.signup_samples]):
             date = row["date_iso"] or row["date_raw"] or "unknown date"
             lines.append(f'  [{idx}] date={date} subject="{_one_line(row["subject"], 200)}"')
-            snippet = _one_line(row["body_snippet"], SNIPPET_CHARS_SENT)
+            snippet = _one_line(row["body_snippet"], depth.signup_chars)
             if snippet:
                 lines.append(f"      body_snippet: {snippet}")
         lines.append("")
@@ -84,54 +85,19 @@ def _save_batch(conn, batch: list, results: list) -> int:
 
 
 def classify_all(conn, provider: "ai.AIProvider", batch_size: int = 6,
-                 max_groups: int | None = None, control=None) -> dict:
-    groups = build_groups(conn, MAX_SAMPLES_PER_GROUP)
+                 max_groups: int | None = None, control=None, depth=None) -> dict:
+    depth = run_options.get_depth(depth)
+    groups = build_groups(conn, depth.signup_samples)
     if max_groups:
         groups = groups[:max_groups]
+    ai_batches.note_missing_text(row for group in groups for row in group.samples)
     if not groups:
         print("Nothing to classify - no new candidate senders.")
         jobcontrol.report(control, 1, 1)
         return {"groups": 0, "answered": 0, "requests": 0, "failed_batches": 0}
 
-    batch_size = max(1, int(batch_size))
-    total_batches = -(-len(groups) // batch_size)
-    where = "on this computer" if provider.is_local else "over the internet"
-    print(f"{len(groups)} candidate groups to classify, {batch_size} per request "
-          f"(~{total_batches} requests, sent {where}).")
-    jobcontrol.report(control, 0, total_batches, f"0 of {total_batches} requests")
-
-    answered = requests = failed = consecutive_failures = 0
-    for start in range(0, len(groups), batch_size):
-        jobcontrol.check(control)
-        batch = groups[start:start + batch_size]
-        requests += 1
-        try:
-            results = provider.structured_call(
-                SYSTEM_PROMPT, build_user_message(batch), CLASSIFY_TOOL,
-                essential=ESSENTIAL_KEYS, fallbacks=ENUM_FALLBACKS, max_tokens=MAX_TOKENS)
-        except ai.ProviderFormatError as exc:
-            # The model answered but couldn't produce usable output. Skip this
-            # batch (it will be retried next run) and carry on.
-            failed += 1
-            consecutive_failures += 1
-            print(f"  batch {requests}/{total_batches} skipped: {exc}")
-            jobcontrol.report(control, requests, total_batches, f"{requests} of {total_batches} requests")
-            if consecutive_failures >= ABORT_AFTER_FAILED_BATCHES:
-                raise ai.ProviderError(
-                    f"The AI failed {ABORT_AFTER_FAILED_BATCHES} batches in a row, so I stopped. "
-                    f"Try a smaller batch size or a more capable model. "
-                    f"Everything finished so far is kept.") from None
-            continue
-        consecutive_failures = 0
-        got = _save_batch(conn, batch, results)
-        answered += got
-        usage = ""
-        if provider.last_usage and provider.last_usage[0] is not None:
-            usage = f" ({provider.last_usage[0]} tokens in / {provider.last_usage[1]} out)"
-        note = f", {len(batch) - got} unanswered" if got < len(batch) else ""
-        print(f"  request {requests}/{total_batches}: {got}/{len(batch)} groups classified{note}{usage}")
-        jobcontrol.report(control, requests, total_batches, f"{requests} of {total_batches} requests")
-
-    if answered < len(groups):
-        print(f"{len(groups) - answered} group(s) got no answer; run this stage again to retry them.")
-    return {"groups": len(groups), "answered": answered, "requests": requests, "failed_batches": failed}
+    return ai_batches.run_batches(
+        provider, groups, batch_size=batch_size, build_message=lambda b: build_user_message(b, depth),
+        tool=CLASSIFY_TOOL, essential=ESSENTIAL_KEYS, fallbacks=ENUM_FALLBACKS, system_prompt=SYSTEM_PROMPT,
+        max_tokens=MAX_TOKENS, save=lambda b, r: _save_batch(conn, b, r),
+        noun="groups", verb="classify", done="classified", control=control)

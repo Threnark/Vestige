@@ -24,7 +24,8 @@ import sqlite3
 
 import jobcontrol
 from models import Account, ImportProblem
-from module_a_imap import _decode_header_value, _extract_snippet, build_header_row, store_message
+from module_a_imap import (_decode_header_value, _extract_body, body_start, build_header_row,
+                           stand_in_message_id, store_message, tidy_message_id, wants_amounts)
 
 EML_READ_BYTES = 262144      # 256 KB per file
 COMMIT_EVERY = 500
@@ -73,16 +74,19 @@ def import_eml(account: Account, paths: list, conn, control=None) -> int:
                 if not msg.get("From"):
                     not_mail += 1                      # not an email (or one with no sender at all)
                     continue
+                from_raw = _decode_header_value(msg.get("From"))
+                to_raw = _decode_header_value(msg.get("To"))
+                subject = _decode_header_value(msg.get("Subject"))
+                date_raw = msg.get("Date")
                 row = build_header_row(
-                    account, "eml", None,
-                    from_raw=_decode_header_value(msg.get("From")),
-                    to_raw=_decode_header_value(msg.get("To")),
-                    subject=_decode_header_value(msg.get("Subject")),
-                    date_raw=msg.get("Date"),
-                    message_id=msg.get("Message-ID") or f"<no-id-{account.name}-eml-{path}>",
+                    account, "eml", None, from_raw=from_raw, to_raw=to_raw, subject=subject, date_raw=date_raw,
+                    # No Message-ID? Build one from what the message says, NOT from the file's path: the
+                    # same email saved twice, or a folder that has moved, must not look like new mail.
+                    message_id=tidy_message_id(msg.get("Message-ID")) or stand_in_message_id(
+                        from_raw, to_raw, subject, date_raw, body_start(raw), where=path),
                     list_unsub=msg.get("List-Unsubscribe"),
                 )
-                if store_message(conn, row, lambda msg=msg: _extract_snippet(msg)):
+                if store_message(conn, row, lambda msg=msg, row=row: _extract_body(msg, wants_amounts(row))):
                     inserted += 1
             except (jobcontrol.Cancelled, sqlite3.Error):
                 raise                                  # a stop request or a database problem must still end the job

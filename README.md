@@ -3,8 +3,10 @@
 Vestige finds the online accounts hiding in your email. It reads the mail you give it, works out
 which messages are evidence of a **real account sign-up** (as opposed to newsletters,
 receipts and noise), and produces a table of **Service → email address you used → date →
-category**. It can also spot **possible email changes**: notices that the address on an
-account was changed, so you know where an old account may live now.
+category**. It can also spot **possible email changes** (notices that the address on an
+account was changed, so you know where an old account may live now), **closed or deactivated
+accounts**, and **subscriptions**: what you pay for, what it costs per month and per year, and whether
+it still looks like it is being charged.
 
 It runs on your own computer. Use a **local AI** and nothing at all leaves it.
 
@@ -13,11 +15,13 @@ It runs on your own computer. Use a **local AI** and nothing at all leaves it.
 > **Designed for Minimal API Cost**  
 > Vestige uses local pre-filtering and character limits to keep processing efficient. The AI never reads your entire inbox: only short excerpts of filtered candidate emails are sent to the model.
 
-* **How it works:** Your mail is scanned and filtered locally on your computer, for free. The AI is only called for likely account sign-ups and email-change notices. For sign-up classification it receives up to three sample emails per sender, each limited to the first 400 characters of the body; for email-change notices it receives the first 800 characters. Several senders are judged per request (6 by default for a cloud AI, 2 for a local AI).
-* **Estimated usage** (sign-up classification):
+* **How it works:** Your mail is scanned and filtered locally on your computer, for free. The AI is only called for the emails that free rules shortlist for one of four pipelines (sign-ups, email changes, closed accounts, subscriptions), and each pipeline has its own short instructions. At the default depth, sign-up classification receives up to three sample emails per sender, each limited to the first 400 characters of the body; email-change notices receive the first 800 characters. Several senders are judged per request (6 by default for a cloud AI, 2 for a local AI).
+* **You control the cost.** Tick only the pipelines you want, and choose a **depth** (Quick, Balanced or Thorough) on the Run Pipeline tab. Depth is how many sample emails, and how many characters of each, the AI reads. A pipeline you leave unticked costs nothing: its emails aren't even downloaded.
+* **Code does the arithmetic.** Dates, billing cycles, totals and "has this sender emailed since?" are worked out by ordinary code, not by the AI. For subscriptions the AI only picks the recurring charge from a numbered list of amounts that code found, so it has nothing to spend tokens on (or to get wrong) beyond reading.
+* **Estimated usage** (sign-up classification, Balanced depth):
   * **~100 candidate groups** (usually one per sender domain): roughly 75,000–110,000 total tokens.
   * **~500 candidate groups:** roughly 380,000–550,000 total tokens.
-* **Cost note:** These figures are estimates. Actual token counts vary with email length and the AI model you select, and email-change notices are processed in a separate step that adds to the total. See [Choosing an AI](#choosing-an-ai-cloud-or-local).
+* **Cost note:** These figures are estimates for sign-up classification only. Actual token counts vary with email length and the AI model you select. The other pipelines add to the total in proportion to how many senders the free rules shortlist for them (how many closure notices and subscription senders your mailbox holds); their usage has not been benchmarked. See [Choosing an AI](#choosing-an-ai-cloud-or-local).
 
 ## Contributing
 
@@ -36,12 +40,13 @@ Please **don't report security problems in a public issue**; see [`SECURITY.md`]
 4. [Getting your email in](#getting-your-email-in)
 5. [Choosing an AI](#choosing-an-ai-cloud-or-local)
 6. [Possible email changes](#possible-email-changes)
-7. [Exporting](#exporting)
-8. [How it works](#how-it-works)
-9. [Command line](#command-line-advanced)
-10. [Tests](#tests)
-11. [Limitations](#limitations)
-12. [Project layout](#project-layout)
+7. [Closed accounts and subscriptions](#closed-accounts-and-subscriptions)
+8. [Exporting](#exporting)
+9. [How it works](#how-it-works)
+10. [Command line](#command-line-advanced)
+11. [Tests](#tests)
+12. [Limitations](#limitations)
+13. [Project layout](#project-layout)
 
 ---
 
@@ -65,8 +70,8 @@ Files are written only if **you** choose:
 
 Write mode saves **results only**. It never saves passwords, API keys or AI server addresses.
 It does save sensitive information: sender names and addresses, email subject lines, short
-excerpts (up to 800 characters) of the text of emails that look like sign-ups, which of your
-addresses each email was sent to, and the AI's answers. The app warns you before turning it
+excerpts (up to 800 characters) of the text of the emails the free rules shortlisted, the money amounts
+printed in billing emails, which of your addresses each email was sent to, and the AI's answers. The app warns you before turning it
 on and offers to delete the file when you close the app. If that worries you, leave write mode
 off, or run the program from a drive you trust and delete the folder afterwards.
 
@@ -86,7 +91,12 @@ memory-only behaviour.
 
   For sign-up classification, per candidate sender: the sender's domain and, for up to three
   sample emails, the date, the subject and the first 400 characters of the body. For email-change
-  notices: the sender, date, subject and the first 800 characters of the body. **Not sent:** your
+  notices: the sender, date, subject and the first 800 characters of the body. For closed-account
+  checks: the sender's domain and, for up to two closure-style emails, the date, subject and the first 350
+  characters. For subscriptions: the sender's domain, a few facts worked out on your computer (how many
+  charges, how often, the last charge date), and for up to two billing emails the date, subject and the
+  first 260 characters, plus a numbered list of the amounts printed in the newest receipt. (Those are the
+  default **Balanced** depth; Quick sends less and Thorough more.) **Not sent:** your
   email addresses, your list of accounts, the full emails, or the rest of your mail. Be aware
   that an excerpt of an email's text can itself contain personal details (a greeting with your
   name, an address printed in the message).
@@ -232,7 +242,8 @@ On macOS and Linux, use `python3` in place of `python` if `python` isn't found. 
 **Code -> Download ZIP** on the repository page, unzip it, and continue from `python -m venv .venv`.
 
 * `requirements.txt` includes CustomTkinter, which the interface needs. PyYAML and python-dotenv are only for the
-  command-line tool, and PyInstaller is only needed to build a program yourself.
+  command-line tool. PyInstaller, which is only needed to build a program yourself, is in
+  `requirements-build.txt` (`pip install -r requirements-build.txt`).
 * On Linux you may need Tkinter first: `sudo apt install python3-tk` (Debian/Ubuntu) or
   `sudo dnf install python3-tkinter` (Fedora).
 * `libpff-python` (for `.pst` files) is the only optional package. If `pip` can't install it for your Python
@@ -247,12 +258,14 @@ To make your own double-click program from the source, see [`README_GUI.md`](REA
 
 Open Vestige (the program from a release download, or `python gui_app.py` if you run from source). Then in the app:
 1. **Setup** - add your email account(s), pick an AI (cloud with an API key, or local), optionally
-   turn on write mode.
-2. **Run Pipeline** - import a mail file (`.pst`, `.mbox`, `.eml`) or fetch over IMAP, then **Run full pipeline**
-   (try *Limit AI to N groups = 10* first to see real results cheaply). A **progress bar** shows the
-   current step and an overall percentage, with a moving "working..." marker while a total isn't known yet
-   (for example while a large mail file is being indexed).
-3. **Results** - review the tables, then **Export** into a folder you choose.
+   turn on write mode. An account with an app password is fetched over IMAP; for one without, click
+   **Import mail file...** to load an exported file (`.pst`, `.mbox`, `.eml`).
+2. **Run Pipeline** - under **What to run**, tick the pipelines you want (Sign-ups, Email changes, Closed
+   accounts, Subscriptions) and choose a **Depth** (Quick, Balanced or Thorough), then click **Run selected
+   pipelines** (try typing 10 into *Test run: check only N senders* first to see real results cheaply). The page scrolls; the
+   **progress bar**, **Run selected pipelines** and **Stop** stay at the bottom, and the log can be made taller
+   or shorter by dragging the bar under it.
+3. **Results** - review the four tables, then **Export** into a folder you choose.
 
 Click **? Help** (or press F1) in the app for help on the current page, including how to get your mail out of
 Gmail, Yahoo, iCloud and Outlook. See [`README_GUI.md`](README_GUI.md) for a walk-through of each page.
@@ -270,9 +283,9 @@ is only ever read. Vestige reads three kinds directly:
 | Gmail Takeout, Thunderbird | `.mbox` | Nothing extra needed |
 | Individual emails | `.eml` files, or a **folder** of them | Folders are searched recursively |
 
-In the app: add an account with the right email address (no password), then
-*Run Pipeline -> 1. Import mail file...*, pick the account, and choose the file(s) or folder. You can pick
-several files at once.
+In the app: add an account with the right email address (no password), then click
+*Setup -> Import mail file...*, pick the account, and choose the file(s) or folder. You can pick
+several files at once. The app then switches to Run Pipeline so you can watch the import.
 
 * **Gmail:** [Google Takeout](https://takeout.google.com) -> select only *Mail* -> download the `.mbox`
   (it arrives inside a zip; unzip it first).
@@ -297,7 +310,7 @@ documents for Outlook.com mailboxes (support.microsoft.com -> "Export your Outlo
    (.pst)*, choose the account's top folder and tick *Include subfolders*. **New Outlook:** Microsoft's
    article says it can export a `.pst` too (third-party guides put it under *Settings -> Files -> Export*;
    menus change, so follow Microsoft's "Export your Outlook.com mailbox" page if yours differs).
-3. In Vestige: *Run Pipeline -> 1. Import mail file...* and choose the `.pst`.
+3. In Vestige: *Setup -> Import mail file...* and choose the `.pst`.
 
 Notes:
 * **Which folders are read:** everything except Sent Items, Drafts, Outbox, Calendar, Contacts, Tasks,
@@ -361,7 +374,7 @@ How it copes with different models: it asks for the strictest structured format 
 steps down if it's rejected, extracts JSON even from chatty or "thinking" replies, validates against the
 schema, and automatically re-asks (up to twice) when the answer is unusable. A batch that still fails is
 skipped, never fatal, and retried on the next run. Use *Test connection* and a small
-*Limit AI to N groups* run before a full scan, and always eyeball the confidence scores: a weaker model is
+*Test run: check only N senders* before a full scan, and always eyeball the confidence scores: a weaker model is
 less reliable, not equally reliable.
 
 Cost (cloud): classification is per sender domain, not per email, with several domains per request, and
@@ -394,13 +407,64 @@ didn't scan, you only get the printed hint. Treat every row as a lead to check, 
 
 ---
 
+## Closed accounts and subscriptions
+
+Both follow the same rule as the rest of Vestige: **the AI reads, code counts.** Free rules shortlist
+the emails, the AI only confirms that shortlist, and every date and sum is worked out by ordinary code.
+
+### Closed or deactivated accounts
+1. **Free rules** flag subjects such as "Your account has been closed" or "Sorry to see you go".
+2. **The AI confirms only those emails.** It says whether one really states that *your own account* was
+   closed, deactivated or deleted (not marketing, a how-to, a warning, or a cancelled subscription).
+3. **Code checks for later mail** from the same sender. Mail within a week of the notice is ignored (goodbye
+   messages). The result is **Likely closed** (nothing since) or **Possibly closed** (the service has emailed
+   again, which may be marketing or a reopened account).
+
+The service stays in the **Sign-ups** table; it just gains an **Account check** note. Confirmed notices
+also appear in their own **Closed accounts** table, including for services with no sign-up record. Each row
+shows which of your addresses the notice was sent to.
+
+A service that has simply gone quiet is *not* evidence of a closed account, so it is never labelled
+closed. The Sign-ups table has a separate, weaker **Activity hint** (for example "No mail since
+2022-03-14") that appears only when a service hasn't emailed an address for a year or more while other mail
+kept arriving there. It is left blank when a closure notice exists.
+
+### Subscriptions
+1. **Free rules** flag receipts, invoices, renewals, failed payments, trials and cancellations, and give
+   each a kind. The **amounts** printed in the email are found by code while the text is read.
+2. **Code groups them by sender** and works out how many charges there are, how often (weekly, monthly,
+   yearly...), the last charge, and whether a cancellation notice exists. Senders that only send irregular
+   one-off receipts are dropped here, so they cost no AI tokens.
+3. **The AI confirms the shortlist:** is it a real recurring subscription, what is the plan called, what do
+   the emails say about its status, and which **numbered** amount is the recurring charge. It never writes a
+   price itself.
+4. **Code decides the status and adds up the cost.** *Active* (a charge is not overdue), *Possibly stopped*
+   (a charge was due and none came, although your mail carried on), *Cancelled* (a cancellation notice and no
+   charge after it), *Trial* or *Unclear*. The monthly and yearly totals add up the Active ones only, per
+   currency, exactly as printed.
+
+Status is measured against the **newest email in the same mailbox, not today's date**, so an old export isn't
+mistaken for a stopped subscription. Receipts from payment processors such as Apple, Google Play or PayPal
+cover many services, so they are grouped by sender *and* amount, and over IMAP only the newest few are read.
+Each subscription is one row per sender; its **Email Address Used** lists every address of yours that received
+that sender's billing emails.
+
+**Limits:** these are leads to check, not facts. A deleted receipt looks like a missed payment. Prices are
+read from the email text, so an image-only receipt has no amount. A bare "$" can't be told apart from
+other dollars, so amounts are kept as printed.
+
+---
+
 ## Exporting
 
-Nothing is exported unless you ask, and **Run full pipeline never exports**. On the **Results** tab choose a
+Nothing is exported unless you ask, and **Run selected pipelines never exports**. On the **Results** tab choose a
 folder (for example a drive you trust), tick CSV and/or Markdown, and click **Export now**:
-* `signups.csv` - one row per **service and address** (two addresses on Spotify = two rows)
+* `signups.csv` - one row per **service and address** (two addresses on Spotify = two rows), with the
+  Account Check, Last Mail From Service and Activity Hint columns
 * `signups_possible_email_changes.csv` - the possible email changes (only if any were found)
-* `signups.md` - both tables as a readable document
+* `signups_closed_accounts.csv` - confirmed closure notices (only if any were found)
+* `signups_subscriptions.csv` - subscriptions with status, amount, cycle and cost (only if any were found)
+* `signups.md` - every table as a readable document, with the subscription totals
 
 Options: add a date/time to the file names (on by default), and/or put each export in a new dated sub-folder.
 Existing files are never overwritten: a name clash becomes `name (2).csv`. If the drive isn't connected or
@@ -411,22 +475,31 @@ isn't writable, you get a plain message and nothing is half-written.
 ## How it works
 
 ```
-  Module A            Module B             Module C / E              Module D
+  Module A            Module B             Modules C / E / F / G     Module D
   Retrieval     ->    Pre-filter     ->    AI (cloud or local)  ->   Tables + export
-  IMAP headers        free, rule-based     sign-ups (C)              one row per
-  or MBOX file        scoring, no AI       email changes (E)         service+address
-  (bodies only        (sign-up score and
-   for candidates)     email-change score)
+  IMAP headers        free, rule-based     C sign-ups                one row per service
+  or MBOX file        scoring, no AI:      E email changes           and address, plus
+  (bodies only        four rule tracks     F closed accounts         closures and
+   for the ticked     (sign-up, change,    G subscriptions           subscriptions
+   shortlists)         closure, billing)   (own prompt each)
         |                                          |
         +--------- one database (memory, or a file in write mode) ---------+
 ```
 
-* **A** fetches headers only (fast, read-only), then short body snippets only for candidates.
-* **B** scores subject lines with editable rules; most mail is discarded here, for free.
+* **A** fetches headers only (fast, read-only), then short body snippets only for the emails the pipelines
+  you ticked will actually read (a few per sender for sign-ups, closed accounts and subscriptions; every
+  notice for email changes). It also reads the money amounts printed in billing emails.
+* **B** scores subject lines with editable rules; most mail is discarded here, for free. It is the shared
+  free step: all four AI pipelines start from what it shortlists.
 * **C** judges candidates per sender domain (identity providers such as `accounts.google.com`, which send
   notices about many different apps, are judged per notice so each resolves to its own service).
 * **E** examines email-change notices (see above).
+* **F** confirms closure notices; code then looks for later mail (see above).
+* **G** confirms subscriptions; code works out the cycle, status and totals (see above, and `billing_math.py`).
 * **D** builds the tables and writes files only when asked.
+
+Which pipelines run, and how much text each one reads, is chosen in `run_options.py` (the Run Pipeline tab's
+tick boxes and depth control, and `--pipelines` / `--depth` on the command line).
 
 Every stage is resumable and only does work that hasn't been done: re-running after adding a mailbox only
 processes what's new, and (in write mode) a crash costs you nothing already finished.
@@ -448,6 +521,8 @@ python main.py prefilter-report            # sanity check, no AI used
 python main.py fetch-bodies
 python main.py classify --ai anthropic --max-domains 10     # a cheap test run first
 python main.py find-changes --ai anthropic
+python main.py check-closed --ai anthropic          # closed or deactivated accounts
+python main.py find-subscriptions --ai anthropic    # recurring charges and whether they still run
 python main.py export --out-dir "D:\Safe\Exports" --subfolder
 
 # local AI instead:
@@ -457,9 +532,12 @@ python main.py classify --ai openai-compatible --base-url https://api.groq.com/o
        --model <model> --api-key-env GROQ_API_KEY
 ```
 
-`python main.py all` runs fetch -> prefilter -> bodies -> classify -> find-changes (it does **not** export);
-add `--skip-fetch` to skip the IMAP step, for example after importing a file. `python main.py status` shows
-how many rows each stage has produced. Delete `accounts.db` when you're finished with it.
+`python main.py all` runs fetch -> prefilter -> bodies -> the chosen pipelines (it does **not** export);
+add `--skip-fetch` to skip the IMAP step, for example after importing a file. Choose pipelines with
+`--pipelines signups,changes,closed,subscriptions` (default: all four) and how much each AI request reads
+with `--depth quick|balanced|thorough` (default: balanced); every AI command accepts `--depth`. For example,
+`python main.py all --skip-fetch --pipelines signups,changes --depth quick` skips the closed-account and
+subscription checks. `python main.py status` shows how many rows each stage has produced. Delete `accounts.db` when you're finished with it.
 
 ---
 
@@ -472,8 +550,9 @@ python -m unittest -v
 Standard library only; no network, no API key, no real mail (the tests that build the real interface run only when
 CustomTkinter and a display are available, and are skipped otherwise). AI services are replaced by fakes (the
 OpenAI-compatible adapter is tested against a small server on localhost), mail by synthetic MBOX/EML files (and, for `.pst`, a stand-in for the libpff library).
-They cover the matching of masked addresses, the AI adapters' fallback/retry behaviour, the pipeline end to
-end, export rules (no overwriting, spreadsheet safety), write-mode save/resume, and the guarantee that
+They cover the matching of masked addresses, the amount, billing-cycle and subscription-status maths, the closed-account
+and subscription pipelines end to end, the pipeline and depth choices, the AI adapters' fallback/retry behaviour, the
+pipeline end to end, upgrading a session saved by the previous version, export rules (no overwriting, spreadsheet safety), write-mode save/resume, and the guarantee that
 credentials never reach any file. The security tests (`tests/test_security.py`) also check that the mail
 connection refuses a server with an untrusted certificate (using a throw-away local server, when the `openssl`
 tool is installed), that nothing in the code switches certificate checking off, and that saved files are
@@ -493,6 +572,14 @@ private to their owner on macOS and Linux.
   authority to your computer's trusted certificates, or import a mail file instead.
 * **Email-change detection** depends on notices existing and being recognised, and can't resolve an address you
   didn't scan.
+* **Closed-account and subscription results are leads, not facts.** They depend on the service having sent a
+  notice or receipt that still exists in the mail you scanned and that the free rules recognise (they are in
+  `module_b_prefilter.py`). A subscription's status is judged from the dates of its charge emails, so a deleted
+  receipt looks like a missed payment. Amounts are only found in text, not in images, and each currency is
+  totalled separately.
+* **Depth trades cost for thoroughness.** Quick can miss an unusual email; Thorough sends the most text.
+* **The new interface layout hasn't been checked by the automated tests on a real screen**, only wired up
+  against a stand-in for Tk (see [Tests](#tests)). If something looks cut off, please open an issue with a screenshot.
 * Python can't guarantee it wipes secrets from RAM (see [Memory](#memory-ram)).
 * **The interface depends on CustomTkinter**, a third-party library whose releases have been infrequent
   (5.2.2 in January 2024, then 6.0.0 in June 2026), so check that it is still maintained before relying on it
@@ -512,7 +599,7 @@ This project is licensed under the **GNU General Public License v3.0 (GPL-3.0-or
 
 ```
 gui_app.py                 desktop app (run this)
-  gui_setup.py             Setup page
+  gui_setup.py             Setup page (accounts, mail-file import)
   gui_run.py               Run Pipeline page + progress
   gui_results.py           Results page + export panel
   ui_theme.py              the dark-purple look (colours, fonts, widget factories) - restyle here
@@ -536,12 +623,18 @@ module_a_eml.py            Module A: .eml files and folders of them
 module_b_prefilter.py      Module B: rule-based scoring, grouping
 module_c_classify.py       Module C: sign-up classification
 module_e_email_changes.py  Module E: possible email changes
+module_f_closures.py       Module F: closed or deactivated accounts (AI confirms, code checks later mail)
+module_g_subscriptions.py  Module G: subscriptions (code groups and judges status, AI confirms and names)
+billing_math.py            amounts, billing cycles, subscription status and totals (pure code, no AI)
+ai_batches.py              the request loop shared by modules F and G
+run_options.py             which pipelines exist, and what Quick / Balanced / Thorough depth mean
 migration_matcher.py       masked-address matching (pure code)
 module_d_export.py         Module D: tables + file export
 db.py  models.py  paths.py  jobcontrol.py (stop + progress)  config.py (CLI only)
 prompts/                   the exact AI prompts and JSON schemas
 tests/                     unit tests
 requirements.txt           Python packages
+requirements-build.txt     PyInstaller, only for building a double-click program
 accounts.example.yaml  .env.example                  command-line tool settings (copy and fill in)
 build_windows.bat  build_mac_linux.sh                package the desktop app with PyInstaller
 .github/workflows/build-all.yml                      builds the releases and publishes them with SHA256SUMS

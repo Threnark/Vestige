@@ -17,7 +17,7 @@ class Snippets(unittest.TestCase):
         m.set_content("<html><head><style>body{margin:0} .x{color:red}</style></head>"
                       "<body><script>track()</script><p>Welcome to <b>Acme</b>!</p>"
                       "<div>Please verify&nbsp;your email.</div></body></html>", subtype="html")
-        snippet = imap_mod._extract_snippet(m)
+        snippet = imap_mod._extract_body(m).snippet
         self.assertIn("Welcome to Acme", snippet)
         self.assertNotIn("margin", snippet)
         self.assertNotIn("track()", snippet)
@@ -27,19 +27,19 @@ class Snippets(unittest.TestCase):
         m = EmailMessage()
         m.set_content("Plain version: thanks for signing up to Acme, please confirm your account today.")
         m.add_alternative("<p>HTML version</p>", subtype="html")
-        self.assertTrue(imap_mod._extract_snippet(m).startswith("Plain version"))
+        self.assertTrue(imap_mod._extract_body(m).snippet.startswith("Plain version"))
 
     def test_stub_plain_part_falls_back_to_html(self):
         m = EmailMessage()
         m.set_content("View in browser")
         m.add_alternative("<p>Your Acme account was created successfully. Welcome aboard, friend!</p>", subtype="html")
-        self.assertIn("account was created", imap_mod._extract_snippet(m))
+        self.assertIn("account was created", imap_mod._extract_body(m).snippet)
 
     def test_attachments_are_ignored_and_length_is_capped(self):
         m = EmailMessage()
         m.set_content("x" * 5000)
         m.add_attachment(b"secret", maintype="application", subtype="octet-stream", filename="a.bin")
-        self.assertEqual(len(imap_mod._extract_snippet(m)), imap_mod.BODY_SNIPPET_CHARS)
+        self.assertEqual(len(imap_mod._extract_body(m).snippet), imap_mod.BODY_SNIPPET_CHARS)
 
     def test_invisible_padding_is_removed(self):
         self.assertEqual(imap_mod._html_to_text("<p>a\u200b\u034f b</p>"), "a b")

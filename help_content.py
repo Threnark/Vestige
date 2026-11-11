@@ -38,6 +38,7 @@ import module_a_imap
 import module_c_classify
 import module_e_email_changes
 import paths
+import run_options
 from models import (
     CLOUD_PRESETS, DEFAULT_BATCH_CLOUD, DEFAULT_BATCH_LOCAL, KNOWN_IMAP_HOSTS, LOCAL_PRESETS,
     is_microsoft_mail,
@@ -210,16 +211,21 @@ BODY_KB_DOWNLOADED = module_a_imap.BODY_FETCH_BYTES // 1000           # download
 SIGNUP_SAMPLES = module_c_classify.MAX_SAMPLES_PER_GROUP              # emails shown to the AI per sender group
 SIGNUP_CHARS = module_c_classify.SNIPPET_CHARS_SENT                   # body characters per sample
 CHANGE_CHARS = module_e_email_changes.SNIPPET_CHARS_SENT              # body characters per change notice
+_BAL = run_options.BALANCED                                           # the default depth; the others are in run_options.py
+_QUICK, _THOROUGH = run_options.QUICK, run_options.THOROUGH
 DATA_FOLDER = f"{paths.DATA_DIR_NAME}/{paths.SESSION_DB_NAME}"        # where Write Mode saves
 
-# The exact names on the Run Pipeline buttons (tests check these against the real buttons).
-BTN_FETCH = "1. Fetch headers (IMAP)"
-BTN_IMPORT = "1. Import mail file..."
-BTN_PREFILTER = "2. Pre-filter (free)"
-BTN_BODIES = "3. Fetch email bodies"
-BTN_CLASSIFY = "4. AI: classify sign-ups"
+# The exact names on the Run Pipeline buttons, and on the Setup page's import button (tests check
+# these against the real buttons).
+BTN_FETCH = "1. Scan mailbox (IMAP)"
+BTN_IMPORT = "Import mail file..."
+BTN_PREFILTER = "2. Shortlist emails (free)"
+BTN_BODIES = "3. Download email text"
+BTN_CLASSIFY = "4. AI: find sign-ups"
 BTN_CHANGES = "5. AI: find email changes"
-BTN_FULL = "Run full pipeline (1-5)"
+BTN_CLOSED = "6. AI: closed accounts"
+BTN_SUBS = "7. AI: subscriptions"
+BTN_FULL = "Run selected pipelines"
 BTN_STOP = "Stop"
 
 
@@ -243,48 +249,56 @@ START = Topic(
             "Some patience. A large mailbox can take a while to scan.",
         ),
         section("Setting up, step by step"),
+        para("The line at the top of the Setup tab always says what to do next, and turns green when you are ready."),
         steps(
             "Choose your AI. On the Setup tab, under “AI provider”, pick “Cloud AI (API key)” and paste a key, "
             "or pick “Local AI (runs on this computer)” and point Vestige at a program such as Ollama. The "
             "“AI: cloud or local” help page explains both.",
             "Add your email accounts. Still on the Setup tab, click “Add account”. Enter a nickname and your "
             "email address. Then either enter an app password (so Vestige can read the mailbox), or leave the "
-            "password empty and import an exported file later. Each email provider has its own page in the list "
-            "on the left.",
-            f"Run the pipeline. Go to the “Run Pipeline” tab and click “{BTN_FULL}”. Or run the steps one at a "
-            f"time with the buttons described below.",
+            f"password empty and click “{BTN_IMPORT}” next to the account list to load an exported file. Each email "
+            f"provider has its own page in the list on the left.",
+            f"Run the pipeline. Go to the “Run Pipeline” tab, tick the pipelines you want, and click “{BTN_FULL}”. "
+            f"Or run the steps one at a time with the buttons described below.",
             f"Wait for it to finish. The progress bar and the log show what is happening. You can click "
             f"“{BTN_STOP}” at any time. Everything that was finished is kept.",
             "Review and export. Open the “Results” tab to look through what was found. Click “Export now” if you "
             "want to save it as a CSV or Markdown file.",
         ),
         tip("Do a small test run first",
-            "On the Run Pipeline tab, type a small number such as 5 into “Limit AI to N groups”. This makes a "
-            "quick, cheap test so you can check that everything works before you scan everything. Empty the box "
-            "again for the real run."),
-        section("What each button on the Run Pipeline tab does"),
+            "On the Run Pipeline tab, type a small number such as 5 into “Test run: check only N senders”. This "
+            "makes a quick, cheap test so you can check that everything works before you scan everything. Empty "
+            "the box again for the real run."),
+        section("What the main buttons do"),
         para("These are short descriptions. The “Run Pipeline” help page has the details."),
         bullets(
+            f"{BTN_IMPORT} (Setup tab): reads an exported file (.pst, .mbox or .eml) for the account you choose. "
+            f"No password is needed. Outlook and Hotmail accounts are used this way.",
             f"{BTN_FETCH}: connects to your mailbox with the app password and reads the sender, subject and date "
             f"of each email. It only reads. It never changes or deletes anything.",
-            f"{BTN_IMPORT}: does the same job from an exported file (.pst, .mbox or .eml) instead of connecting. "
-            f"No password is needed. Outlook and Hotmail accounts are used this way.",
             f"{BTN_PREFILTER}: uses built-in rules on the subject lines to pick out emails that look like "
             f"sign-ups. No AI and no cost.",
-            f"{BTN_BODIES}: downloads a short piece of text for only the emails that passed the pre-filter. "
-            f"(Emails from an imported file already have it.)",
+            f"{BTN_BODIES}: downloads a short piece of text for only the shortlisted emails that the AI will read: "
+            f"a few per sender. (Emails from an imported file already have it.)",
             f"{BTN_CLASSIFY}: shows the AI a few examples from each sender and asks whether they prove that you "
             f"created an account.",
             f"{BTN_CHANGES}: looks only at emails saying an account's email address was changed, to find clues "
             f"about accounts that moved to another address.",
-            f"{BTN_FULL}: runs steps 2 to 5 in order, and starts with step 1 (the IMAP fetch) unless you untick "
-            f"“Full pipeline starts with an IMAP fetch”. Untick it when you imported a file.",
+            f"{BTN_CLOSED}: looks only at emails that read like “your account was closed” notices, and asks the AI "
+            f"to confirm them. Code then checks whether the service has emailed since.",
+            f"{BTN_SUBS}: looks only at receipts, renewals and cancellation notices. Code works out the billing "
+            f"cycle and the last charge. The AI confirms real subscriptions and picks the amount.",
+            f"{BTN_FULL}: runs the free steps 2 and 3, then the pipelines you ticked under “What to run”. It "
+            f"starts with step 1 (scanning your mailbox over IMAP) when an account has an app password and “Fetch "
+            f"new mail first” is ticked.",
             f"{BTN_STOP}: stops after the step it is on. Everything finished so far is kept.",
         ),
         section("What to expect from the results"),
-        para("The Results tab has two tables. “Sign-ups” has one row for each service and email address: the "
+        para("The Results tab has four tables. “Sign-ups” has one row for each service and email address: the "
              "service name, the address you used, the earliest sign-up date found, a category and a confidence "
              "score. “Possible email changes” shows clues that an account's email address was changed."),
+        para("“Closed accounts” lists notices that an account was closed or deactivated. “Subscriptions” lists "
+             "recurring charges, what they cost, and whether they still seem to be running."),
         para("Treat the results as leads to check, not as proof. The AI can make mistakes, and Vestige can only "
              "find accounts that left an email behind. If you deleted a service's emails, it may not show up."),
         info("Nothing is saved unless you choose to",
@@ -298,6 +312,10 @@ START = Topic(
             "read your mailbox without knowing your real password. You can delete it later.",
             "API key: a secret code from an AI company that lets Vestige use their AI. Treat it like a password.",
             "Local AI: an AI that runs on your own computer, so nothing is sent over the internet.",
+            "Pipeline: one kind of search. Vestige has four: sign-ups, email changes, closed accounts and "
+            "subscriptions. You choose which to run.",
+            "Depth: how much of each sender's mail the AI reads. Quick is the cheapest and fastest, and Thorough the "
+            "most careful.",
             "Header: the sender, subject, date and similar details at the top of an email.",
             "Mail file: a copy of your mail saved as a file. Vestige reads .pst (Outlook), .mbox and .eml files.",
             "Group: all the sign-up-looking emails from one sender. Vestige asks the AI about a group at a "
@@ -366,8 +384,8 @@ GMAIL = Topic(
             "Click “Deselect all”, then tick only “Mail”.",
             "Follow the prompts to create the export, and download it when Google says it is ready.",
             "The download is a .zip file. Unzip it. Inside is a .mbox file.",
-            "In Vestige, open the Run Pipeline tab, click “1. Import mail file...”, choose the account, then "
-            "choose the .mbox file.",
+            f"In Vestige, add your Gmail address on the Setup tab and leave the app password empty. Then click "
+            f"“{BTN_IMPORT}”, choose that account, and choose the .mbox file.",
         ),
         link("Open Google Takeout", URL_GOOGLE_TAKEOUT),
     ),
@@ -413,7 +431,7 @@ YAHOO = Topic(
             "“Folders” box, separated by commas.",
             "Vestige never marks emails as read and never changes, moves or deletes anything.",
             "Prefer not to use an app password? Any mail program that can save your mail as .mbox or .eml files "
-            "will do. Then use “1. Import mail file...”.",
+            f"will do. Then use “{BTN_IMPORT}” on the Setup tab.",
         ),
     ),
 )
@@ -504,9 +522,10 @@ MICROSOFT = Topic(
             "Save the .pst file somewhere you trust. It contains your emails, so an encrypted drive is best.",
             "In Vestige, click “Add account” on the Setup tab. Enter a nickname and your Outlook or Hotmail "
             "address, and leave the password empty. Vestige turns the password box off for these accounts.",
-            f"Go to the Run Pipeline tab, click “{BTN_IMPORT}”, choose that account, then choose your .pst file.",
-            f"Carry on with the pipeline. Untick “Full pipeline starts with an IMAP fetch”, then click "
-            f"“{BTN_FULL}” (or use buttons 2 to 5 one at a time).",
+            f"Still on the Setup tab, click “{BTN_IMPORT}”, choose that account, then choose your .pst file. "
+            f"Vestige switches to the Run Pipeline tab so you can watch the import.",
+            f"Carry on with the pipeline. On the Run Pipeline tab, click “{BTN_FULL}” (or use the individual "
+            f"steps one at a time). With no app password on any account, Vestige skips the IMAP fetch by itself.",
         ),
         link("Microsoft's help: Export your Outlook.com mailbox", URL_MS_EXPORT_OUTLOOKCOM),
         link("Microsoft's help: Export emails to a .pst file", URL_MS_EXPORT_PST),
@@ -533,7 +552,7 @@ MICROSOFT = Topic(
             "“Open Folder”.",
             "Open the “ImapMail” folder, then the folder for your account. By default Thunderbird saves each "
             "mail folder as one MBOX file with no file extension. “Inbox” is the one to start with.",
-            f"In Vestige, click “{BTN_IMPORT}” and choose those files. Choose “All files” in the file window "
+            f"In Vestige, click “{BTN_IMPORT}” on the Setup tab and choose those files. Choose “All files” in the file window "
             f"so they are listed. Vestige recognises MBOX files by what is inside them, so the missing "
             f"extension does not matter.",
         ),
@@ -601,7 +620,8 @@ OTHER = Topic(
             "repeated wrong attempts that could get an account locked.",
             "Look at the log at the bottom of the Run Pipeline tab. It shows the message the server sent back.",
             f"If your provider doesn't offer IMAP, or you can't get it working, export your mail to a .mbox or "
-            f".eml file (many desktop mail programs can) and use “{BTN_IMPORT}”. No password is needed.",
+            f".eml file (many desktop mail programs can) and use “{BTN_IMPORT}” on the Setup tab. No password is "
+            f"needed.",
         ),
     ),
 )
@@ -635,15 +655,21 @@ AI = Topic(
             "graphics card.",
             f"Small local models are less dependable than large cloud models at giving the structured answers "
             f"Vestige needs, so results can be less accurate. That is why Vestige's default for local AI is "
-            f"{DEFAULT_BATCH_LOCAL} groups per request instead of {DEFAULT_BATCH_CLOUD}.",
+            f"{DEFAULT_BATCH_LOCAL} senders per request instead of {DEFAULT_BATCH_CLOUD}.",
             f"Programs in Vestige's list: {', '.join(LOCAL_PROVIDER_NAMES)}. “Other local server” works with any "
             f"program that offers an OpenAI-style address.",
         ),
         section("What is sent to the AI"),
-        para(f"For each group of emails from one sender, Vestige sends the sender's domain and up to "
-             f"{SIGNUP_SAMPLES} sample emails. Each sample is the date, the subject and the first "
-             f"{SIGNUP_CHARS} characters of the body text. For email-change notices it sends the sender, date, "
-             f"subject and the first {CHANGE_CHARS} characters of the body."),
+        para(f"For each group of emails from one sender, Vestige sends the sender's domain and a few sample "
+             f"emails. Each sample is the date, the subject and the start of the body text. At the default depth "
+             f"(Balanced), sign-up checks send up to {SIGNUP_SAMPLES} samples of {SIGNUP_CHARS} characters. For "
+             f"email-change notices it sends the sender, date, subject and the first {CHANGE_CHARS} characters of "
+             f"the body."),
+        para(f"Closed-account checks send up to {_BAL.closure_samples} notices per sender, {_BAL.closure_chars} "
+             f"characters each. Subscription checks send up to {_BAL.billing_samples} billing emails per sender, "
+             f"{_BAL.billing_chars} characters each. They also send a numbered list of the amounts printed in the "
+             f"newest receipt, and a few facts that code worked out on your computer, such as how many charges "
+             f"were seen. The “Depth” setting changes all of these numbers."),
         para("Vestige does not send your list of addresses, the “To” field or the rest of your mail. But the text "
              "of an email can contain anything, such as your name or your address, and that text is part of the "
              "sample. “Test connection” sends the AI a tiny test question, and “Find models” asks the server which "
@@ -707,55 +733,112 @@ AI = Topic(
 
 PIPELINE = Topic(
     id="pipeline", nav="Run Pipeline", title="The Run Pipeline tab",
-    summary="What each option, button and counter does, and in what order.",
+    summary="What to run and how deeply, what each option and button does, and in what order.",
     blocks=(
-        para("The pipeline turns your mailbox into a list of accounts. It works in stages. You can run the whole "
-             "thing with one button, or one stage at a time. Every stage is safe to run again: Vestige skips "
-             "work it has already done."),
-        section("Options (top of the tab)"),
+        para("The pipeline turns your mailbox into lists of accounts, closed accounts and subscriptions. It works "
+             "in stages. The first stages are free and shared by everything. The last stage is your choice of four "
+             "pipelines that use the AI. You can run it all with one button, or one stage at a time. Every stage "
+             "is safe to run again: Vestige skips work it has already done."),
+        para("The page scrolls, so everything is reachable on a small window. Each section is a card. From the top "
+             "they are: Fetch mail from your accounts, What to run, AI requests, Individual steps, Status and Log. The progress bar, "
+             f"“{BTN_FULL}” and “{BTN_STOP}” stay at the bottom, so you can always start, stop and watch a run."),
+        section("Fetch mail from your accounts"),
         bullets(
+            "Accounts: tick the accounts you want “Scan mailbox”, “Download email text” and the full run to use. If "
+            "you tick none, Vestige uses every account that has an app password. Accounts without a password are "
+            "used for file import only. “Select all” ticks every account.",
             "Only mail since: limits the IMAP fetch to emails from that date onward. Write the date like "
-            "01-Jan-2024. Leave it empty for all mail. It does not apply to imported files.",
-            f"Groups per AI request: how many sender groups go into one request to the AI. The default is "
-            f"{DEFAULT_BATCH_CLOUD} for cloud AI and {DEFAULT_BATCH_LOCAL} for local AI. Larger numbers mean fewer "
-            f"requests but are harder for small models. For the email-change stage the number is capped at 5.",
-            "Limit AI to N groups: stops the AI stage after N groups. Use it for a cheap test run. Empty means "
-            "no limit.",
-            "Full pipeline starts with an IMAP fetch: untick this when you imported a file and don't want the "
-            "full run to try an IMAP fetch first.",
+            "01-Jan-2024 or 2024-01-31; a date Vestige can't read is refused before anything connects. "
+            "Leave it empty for all mail. It does not apply to imported files.",
+            "Fetch new mail first: untick this if you don't want the full run to fetch mail over IMAP first. The "
+            "fetch is skipped by itself when no account has an app password.",
         ),
-        section("Accounts to fetch over IMAP"),
-        para("Tick the accounts you want “Fetch headers”, “Fetch email bodies” and the full run to use. If you "
-             "tick none, Vestige uses every account that has an app password. Accounts without a password are "
-             "used for file import only. “Select all” ticks every account."),
-        section("The stages"),
+        para(f"Mail files are not imported on this tab. Use “{BTN_IMPORT}” on the Setup tab instead. It reads "
+             f".pst (Outlook, Hotmail), .mbox and .eml files for the account you choose, then shows you the "
+             f"import here. Imported emails already include their text snippet, so step 3 isn't needed for them."),
+        section("What to run"),
+        bullets(
+            "Sign-ups: finds the services you signed up to, and the address you used.",
+            "Email changes: finds notices that an account's email address was changed.",
+            "Closed accounts: finds notices that an account was closed or deactivated.",
+            "Subscriptions: finds recurring charges, what they cost and whether they still seem to be running.",
+        ),
+        para(f"Tick the pipelines you want and click “{BTN_FULL}” at the bottom of the tab. All four are ticked at "
+             f"first, and you must tick at least one. A pipeline you leave unticked costs nothing: its emails are not downloaded and "
+             f"nothing about them is sent to the AI. A line under the boxes says which will run."),
+        section("Depth"),
+        para("Depth is how much of each sender's mail the AI reads. It is the main way to trade cost against "
+             "thoroughness. It does not change which emails are shortlisted. Answers already given are kept, so "
+             "running again at another depth only fills in what is still unanswered."),
+        bullets(
+            f"Quick: the cheapest and fastest. A first look that can miss unusual emails. Sign-ups read {_QUICK.signup_samples} "
+            f"sample of {_QUICK.signup_chars} characters per sender.",
+            f"Balanced: the default, and exactly how Vestige worked before depth existed. Sign-ups read "
+            f"{_BAL.signup_samples} samples of {_BAL.signup_chars} characters per sender.",
+            f"Thorough: the most careful, and the slowest and most expensive. Sign-ups read {_THOROUGH.signup_samples} samples of "
+            f"{_THOROUGH.signup_chars} characters per sender.",
+            f"The other pipelines scale the same way. Closed accounts read {_QUICK.closure_samples}, "
+            f"{_BAL.closure_samples} or {_THOROUGH.closure_samples} notices per sender. Subscriptions read "
+            f"{_QUICK.billing_samples}, {_BAL.billing_samples} or {_THOROUGH.billing_samples} emails per sender. "
+            f"Email changes read every notice they find: {_QUICK.change_chars} characters of each at Quick, and "
+            f"{_BAL.change_chars} at Balanced and at Thorough (a notice is short, and {_BAL.change_chars} characters "
+            f"is all that is kept of any email, so Thorough has nothing more to read there).",
+        ),
+        section("AI requests"),
+        bullets(
+            f"Senders per AI request: how many senders go into one request to the AI. The default is "
+            f"{DEFAULT_BATCH_CLOUD} for cloud AI and {DEFAULT_BATCH_LOCAL} for local AI. Larger numbers mean fewer "
+            f"requests but are harder for small models. The email-change stage sends notices instead of senders, "
+            f"and caps the number at 5.",
+            "Test run: check only N senders: stops the Sign-ups, Closed accounts and Subscriptions stages after N "
+            "senders. Use it for a cheap test run. It does not limit the Email changes stage. Empty means no limit.",
+        ),
+        para("The first time you run the AI in a session, Vestige asks you to confirm if the AI is not on this "
+             "computer. The window says where the email text will go and shows your settings. Agree once and it "
+             "does not ask again until you restart the program."),
+        section("The steps"),
+        para("The buttons are folded away at first. Click “Show steps” to see them. The first three steps are free "
+             "and shared. Steps 4 to 7 are the four pipelines, each with its own short instructions to the AI. The "
+             "buttons run one step at a time. They are the same steps that “Run selected pipelines” runs in order."),
         bullets(
             f"{BTN_FETCH}: connects to each account over IMAP and reads the sender, recipient, subject, date, "
             f"message ID and unsubscribe header of every email in the scanned folders. It uses read-only access "
             f"and never marks emails as read. Emails already stored are skipped, so running it again only adds "
             f"new mail. A failed sign-in is reported once and is not retried. A big mailbox can take a long time.",
-            f"{BTN_IMPORT}: does the same job from a file. You pick which account the mail belongs to (this is "
-            f"used only to work out which of your addresses each email was sent to), then choose files or a "
-            f"folder of .eml files. It reads .pst (Outlook, Hotmail), .mbox and .eml. Imported emails already "
-            f"include their text snippet, so stage 3 isn't needed for them.",
             f"{BTN_PREFILTER}: scores every subject line with built-in rules. A subject such as “Welcome to…” or "
-            f"“Verify your email” scores high. A subject such as “50% off” or “Your order” scores low. Emails "
-            f"that score high enough become “candidates”. It also flags emails that look like “your email "
-            f"address was changed” notices. The rules are generous, so a borderline email stays a candidate for "
-            f"the AI to judge. This stage is free and uses no AI.",
-            f"{BTN_BODIES}: for candidates only, downloads up to the first {BODY_KB_DOWNLOADED} KB of each email "
-            f"and keeps the first {BODY_CHARS_KEPT} characters of its text. This is what the AI will read.",
-            f"{BTN_CLASSIFY}: groups the candidates by sender. For each group the AI sees up to "
-            f"{SIGNUP_SAMPLES} samples and answers: is this a real account sign-up, what is the service called, "
-            f"its category, how the account was created, and how confident it is. Groups that were already "
-            f"judged are skipped. Answers are kept after every request, so if something fails you can just run "
-            f"it again. If requests keep failing, Vestige stops and tells you.",
+            f"“Verify your email” scores high for sign-ups. It also flags subjects that look like email-change "
+            f"notices, closure notices (“Your account has been closed”) and billing emails (“Your receipt”). The "
+            f"rules are generous, so a borderline email stays a candidate for the AI to judge. This step is free "
+            f"and uses no AI. If you open a session saved by an older version, it also checks those emails for "
+            f"the new clues.",
+            f"{BTN_BODIES}: downloads up to the first {BODY_KB_DOWNLOADED} KB of each email that the ticked "
+            f"pipelines will read, and keeps the first {BODY_CHARS_KEPT} characters of its text. This is what the AI "
+            f"will read. Sign-ups, Closed accounts and Subscriptions show the AI only a few emails per sender (how "
+            f"many depends on the depth), so only those are downloaded, not every shortlisted email. Email changes "
+            f"read every change notice, so all of those are downloaded. If you raise the depth afterwards, run this "
+            f"step again: the AI steps tell you when emails they are about to read have no text.",
+            f"{BTN_CLASSIFY}: groups the candidates by sender. For each group the AI sees a few samples and "
+            f"answers: is this a real account sign-up, what is the service called, its category, how the account "
+            f"was created, and how confident it is. Groups that were already judged are skipped. Answers are kept "
+            f"after every request, so if something fails you can just run it again. If requests keep failing, "
+            f"Vestige stops and tells you.",
             f"{BTN_CHANGES}: looks only at the emails flagged as email-change notices. The AI copies out what "
             f"each notice literally says: the service, whether it went to the old or the new address, and any "
             f"address printed in it (often partly hidden, like j***@gmail.com). Then plain code, not the AI, "
             f"checks which of your real addresses could fit. Nothing is invented.",
-            f"{BTN_FULL}: runs the stages in order: step 1 (unless you unticked it), then 2, 3, 4 and 5. It "
-            f"does not export anything.",
+            f"{BTN_CLOSED}: looks only at emails flagged as closure notices. The AI says whether each one really "
+            f"states that your own account was closed, deactivated or deleted. It ignores marketing, how-to "
+            f"articles and cancelled subscriptions. Then plain code looks for later email from the same sender. "
+            f"The result is “Likely closed” if nothing has arrived since, or “Possibly closed” if the sender "
+            f"has emailed again.",
+            f"{BTN_SUBS}: looks only at receipts, invoices, renewals, failed payments and cancellation notices. "
+            f"Plain code groups them by sender and works out how often they come, the date of the last charge "
+            f"and whether a cancellation notice exists. A sender that only has irregular one-off receipts is "
+            f"dropped there, so it costs nothing. The AI then confirms a real subscription, names the plan, and "
+            f"picks the recurring charge from a numbered list of the amounts that code found. It never writes a "
+            f"price itself. Code then judges whether the subscription still looks active, and adds up the totals.",
+            f"{BTN_FULL}: runs step 1 (when an account has an app password and you haven't unticked the fetch), "
+            f"then steps 2 and 3, then each pipeline you ticked in order. It does not export anything.",
             f"{BTN_STOP}: asks the running stage to stop. It finishes the step it is on, and everything finished "
             f"so far is kept.",
         ),
@@ -763,18 +846,22 @@ PIPELINE = Topic(
         bullets(
             "Progress bar: shows how far the whole run has got. It shows a moving “working…” bar while the "
             "total is not known yet.",
-            "Status line: Emails scanned is every email stored. Sign-up candidates passed the pre-filter. Sender "
-            "groups classified is how many groups the AI has judged. Confirmed sign-ups is how many of those "
-            "groups it judged to be real sign-ups. Email-change notices is how many emails look like change "
-            "notices. Possible email changes is how many of those the AI judged to be real. “Refresh status” "
-            "updates the line.",
+            "Status: one row for each pipeline. Emails scanned is every email stored. The “spotted” counts (sign-up "
+            "emails, change notices, closure notices, billing emails) are how many emails the free rules shortlisted. "
+            "Senders checked by AI is how many senders the AI has judged, and Confirmed sign-ups is how many of "
+            "those it judged to be real sign-ups. Email changes found, Closed accounts found and Subscriptions found "
+            "are how many the AI confirmed. “Refresh status” updates the numbers.",
             "Log: lists what is happening, including warnings and any problems. It is kept in memory only. At the "
-            "start of each AI stage it prints a line saying where your email text is going.",
+            "start of each AI stage it prints a line saying where your email text is going. Drag the bar under "
+            "the log up or down to make it taller or shorter. Double-click the bar to reset it.",
         ),
         tip("A sensible first run",
-            "Add an account, choose your AI, type 5 into “Limit AI to N groups”, then click the full run. If the "
+            "Add an account, choose your AI, type 5 into “Test run: check only N senders”, then click the full run. If the "
             "results look right, clear the box and run it again. Work already done is skipped, so the second "
             "run only does what is left."),
+        tip("Spending as little as possible",
+            "Untick the pipelines you don't need, and choose Quick. You can run the others later: the free steps "
+            "are not repeated."),
     ),
 )
 
@@ -789,9 +876,11 @@ RESULTS = Topic(
     id="results", nav="Results", title="Understanding your results",
     summary="What the tables show, how sure each row is, and how to save them.",
     blocks=(
-        para("The Results tab has two tables. Use the switch at the top to move between them. Click a column "
-             "heading to sort by it. Double-click a row to see every detail about it."),
-        section("Minimum confidence"),
+        para("The Results tab has four tables: Sign-ups, Possible email changes, Closed accounts and Subscriptions. "
+             "Use the switch at the top to move between them. Click a column heading to sort by it. Click a row to "
+             "see the rest of its details in the box under the table: the explanation, and any column the table "
+             "leaves out. A wide table gets a scroll bar along its bottom edge."),
+        section("Minimum AI confidence"),
         para("Each row has a confidence score from 0 to 1, given by the AI. The box at the top (it starts at 0.5) "
              "hides rows below that score. Raise it to see only the strongest results. Lower it to see weaker "
              "guesses too. Click “Refresh” after changing it. The same number is used when you export."),
@@ -803,12 +892,18 @@ RESULTS = Topic(
             "Email Address Used: which of your addresses received that service's emails.",
             "Sign-up Date: the date of the earliest sign-up-looking email Vestige found from that sender to that "
             "address. If older emails were deleted, the real sign-up may be earlier.",
+            "Account check: a note that appears only when the closed-accounts pipeline found a closure notice for "
+            "this service. It says “Likely closed” or “Possibly closed”. The service stays in the table either way.",
+            "Activity hint: a weak clue in plain words, such as “No mail since 2022-03-14”. It appears when the "
+            "service has not emailed that address for a year or more, while other mail kept arriving there. It is "
+            "left blank when the row already has an Account check. It is never called “closed”, because people "
+            "stop getting a service's mail for many reasons.",
             f"Category: the kind of service. The AI picks one of: {_CATEGORY_TEXT}.",
-            f"Sign-up Method: how the account was most likely made. “native_password” means with an email "
+            f"Sign-up Method (in the box under the table): how the account was most likely made. “native_password” means with an email "
             f"address and password. The others mean “Sign in with…” through another company. The possible values "
             f"are: {_METHOD_TEXT}.",
             "Confidence: how sure the AI is, from 0 to 1.",
-            "Source Domain(s): the website domain(s) the emails came from.",
+            "Source Domain(s) (in the box under the table): the website domain(s) the emails came from.",
         ),
         section("The “Possible email changes” table"),
         para("Some services send a notice when the email address on an account is changed. A notice can be a clue "
@@ -825,6 +920,57 @@ RESULTS = Topic(
             "No address shown means the notice doesn't say.",
             "Confidence: how sure the AI is about its reading of the notice, from 0 to 1.",
         ),
+        section("The “Closed accounts” table"),
+        para("One row for each email that the AI confirmed as a notice that an account was closed, deactivated or "
+             "deleted. This table also lists services that have no sign-up record, because a closure notice proves "
+             "you had an account."),
+        bullets(
+            "Service and Notice date: which service sent the notice, and when.",
+            "Email Address Used: which of your addresses the notice was sent to. It is “(unknown)” if the email "
+            "did not say.",
+            "Type: Closed, Deactivated, Deleted, or Scheduled to close (the notice says it was only planned).",
+            "Closed by (in the box under the table): whether the notice says you asked for it or the service "
+            "did, if it says.",
+            "Check result: “Likely closed” means nothing has arrived from that sender since the notice. “Possibly "
+            "closed” means the sender has emailed again more than a week later. That may be marketing, or the "
+            "account may have been reopened. A scheduled closure is always “Possibly closed”, because it may "
+            "never have happened.",
+            "Later mail: how many emails came after the notice, and the date of the newest. This is worked out "
+            "again whenever you refresh, so importing more mail updates it.",
+            "Closure notice found: shown instead when the notice came from a sign-in service such as "
+            "accounts.google.com, which emails about many apps. Later mail cannot be checked for those.",
+        ),
+        section("The “Subscriptions” table"),
+        para("One row for each recurring subscription the AI confirmed. Vestige works out the dates and the "
+             "arithmetic itself. The AI only reads the emails, names the plan and points at the amount."),
+        bullets(
+            "Email Address Used: which of your addresses received the sender's billing emails. A subscription is "
+            "one row for each sender, so if more than one of your addresses got its billing emails, they are all "
+            "listed.",
+            "Plan (in the box under the table): the plan or tier named in the emails, if there is one.",
+            "Status: Active means the emails fit a subscription that is still being charged. Possibly stopped means "
+            "the next charge was due and no charge email came, although your mail carried on. Cancelled means a "
+            "cancellation notice exists and no charge followed it. Trial means a free trial with no charge seen. "
+            "Unclear means there is too little to tell.",
+            "Last charge and Amount: the date of the newest charge email, and the recurring amount the AI chose "
+            "from the numbered amounts that code found in it.",
+            "Cycle: how often it is charged, worked out from the dates. If the dates could not tell, it may say "
+            "“stated in the email”. A single receipt that says “annual plan” is an example.",
+            "Next expected (in the box under the table): the last charge date plus one cycle.",
+            "Charges By Address (in the box under the table): for each of your addresses that received this "
+            "sender's billing emails, how many charge emails it got and the date of the newest. This shows which "
+            "address a subscription is really on. It is also in the export.",
+            "Per month: what the subscription costs per month, whatever its cycle.",
+        ),
+        para("Under the table, one line adds up the monthly and yearly cost of the Active subscriptions only. Each "
+             "currency is added separately, exactly as printed. A bare “$” stays “$”, because an email that only "
+             "says “$” does not say which dollar it is. Subscriptions that are possibly stopped are counted "
+             "separately so they never inflate the total."),
+        info("How to read Status",
+             "Vestige compares the last charge with how often charges usually come, measured against the newest "
+             "email in the same mailbox, not today's date. So an old export is not mistaken for a stopped "
+             "subscription. But a deleted receipt looks like a missed payment, so treat “Possibly stopped” as a "
+             "reason to check, not as proof."),
         section("Using the results sensibly"),
         bullets(
             "The AI can be wrong. Check anything important on the service's own website.",
@@ -845,8 +991,9 @@ RESULTS = Topic(
             "Click “Export now”.",
         ),
         bullets(
-            "CSV gives one file for the sign-ups, and a second one with “_possible_email_changes” in its name if "
-            "any changes were found. Markdown gives one file that holds both tables.",
+            "CSV gives one file for the sign-ups. It gives more files, with “_possible_email_changes”, "
+            "“_closed_accounts” or “_subscriptions” in their names, when those tables have rows. Markdown gives "
+            "one file that holds every table, and the subscription totals.",
             "Existing files are never overwritten. If a name is taken, Vestige adds (2), (3) and so on.",
             "In the CSV, any cell that starts with =, +, - or @ gets a ' put in front, so a spreadsheet can't "
             "treat it as a formula.",
@@ -875,8 +1022,10 @@ PRIVACY = Topic(
         section("What Vestige reads from your mail"),
         bullets(
             "At first only the headers: sender, recipient, subject, date, message ID and unsubscribe header.",
-            f"Later, for emails that look like sign-ups only, the first part of the text. About {BODY_KB_DOWNLOADED} KB "
-            f"is downloaded and the first {BODY_CHARS_KEPT} characters are kept.",
+            f"Later, only for the emails that the pipelines you ticked will actually read, the first part of the text. "
+            f"About {BODY_KB_DOWNLOADED} KB is downloaded and the first {BODY_CHARS_KEPT} characters are kept. "
+            f"For billing emails Vestige also keeps the money amounts printed in them, in memory, so that the "
+            f"totals can be worked out on your computer.",
             "It only reads. It never sends, moves, flags or deletes mail, and it never marks mail as read. IMAP "
             "folders are opened read-only.",
             "Mail files (.pst, .mbox, .eml) are only read. The original file is never changed.",
@@ -886,10 +1035,10 @@ PRIVACY = Topic(
             "Your mail provider: when you use IMAP, Vestige connects over an encrypted (SSL/TLS) connection, "
             "checks the server's certificate, and signs in with your address and app password. Nothing else goes "
             "there.",
-            f"Your AI: with a cloud AI, the sample text described on the “AI: cloud or local” page (up to "
-            f"{SIGNUP_SAMPLES} samples per sender, each with the date, the subject and the first {SIGNUP_CHARS} "
-            f"characters of text) and your API key are sent over the internet to that company. With a local AI "
-            f"on this computer, nothing leaves it.",
+            f"Your AI: with a cloud AI, the sample text described on the “AI: cloud or local” page and your API "
+            f"key are sent over the internet to that company. For sign-ups that is up to {SIGNUP_SAMPLES} samples "
+            f"per sender, each with the date, the subject and the first {SIGNUP_CHARS} characters of text. The "
+            f"other pipelines send a little less per email. With a local AI on this computer, nothing leaves it.",
             "Links in this Help window: if you click one, it opens in your normal web browser. Vestige itself "
             "never contacts those websites.",
             "Nothing else. There is no update check, no analytics and no crash reporting.",
@@ -900,7 +1049,7 @@ PRIVACY = Topic(
             "haven't exported, Vestige warns you before it closes.",
             f"Write Mode (optional, off by default): saves your results to a file called {DATA_FOLDER}, next to the "
             f"program, so a crash doesn't lose your work. It contains sender names and addresses, subject lines, "
-            f"short pieces of email text, which of your addresses you used, and the AI's results. It never "
+            f"short pieces of email text, money amounts from billing emails, which of your addresses you used, and the AI's results. It never "
             f"contains passwords, API keys or AI server addresses. The file is not encrypted. Vestige shows a "
             f"warning before turning it on, warns you if the folder looks cloud-synced, and asks on close whether "
             f"to keep or delete the file.",
@@ -951,7 +1100,8 @@ ABOUT = Topic(
         para("Vestige helps you find online accounts you may have forgotten about. It looks through the emails in "
              "your mailboxes, either directly or from a mail file you export, and works out which messages are "
              "sign-up confirmations. Then it lists each service with the email address you used and the date "
-             "you signed up."),
+             "you signed up. It can also point out accounts that look closed, and subscriptions that are "
+             "still being charged."),
         para("An AI of your choice does the judging, including one that runs entirely on your own computer. "
              "Vestige keeps nothing on your drive unless you ask it to."),
         section("License"),

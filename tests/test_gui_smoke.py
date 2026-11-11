@@ -58,7 +58,7 @@ class Smoke(unittest.TestCase):
     def test_run_page_has_help_boxes(self):
         page = self.run_mod.RunPage(fake_tk.FakeWidget(self.root), self.app)
         boxes = self.question_marks(page)
-        self.assertEqual(len(boxes), 5)                              # Options, Accounts, Stages, Progress, Log
+        self.assertEqual(len(boxes), 7)           # Fetch over IMAP, What to run, AI requests, Steps, Status, Log, Progress
         for box in boxes:
             box.kw["command"]()
             self.assertEqual(self.env.help_ui._window.topic_id, "pipeline")
@@ -100,12 +100,18 @@ class Smoke(unittest.TestCase):
         self.assertNotIn("Microsoft", dialog.pw_hint.kw["text"])
 
     def test_import_window_help_points_microsoft_accounts_at_their_page(self):
-        dialog = self.run_mod.ImportDialog(self.root, self.accounts)
+        dialog = self.setup_mod.ImportDialog(self.root, self.accounts)
         self.assertEqual(len(self.question_marks(dialog)), 1)
         dialog.var.set("hot")
         self.assertEqual(dialog._help_topic(), "microsoft")
         dialog.var.set("gm")
-        self.assertEqual(dialog._help_topic(), "pipeline")
+        self.assertEqual(dialog._help_topic(), "start")
+
+    def test_import_window_offers_the_selected_account_first(self):
+        self.assertEqual(self.setup_mod.ImportDialog(self.root, self.accounts, "hot").var.get(), "hot")
+        first = self.accounts[0].name
+        self.assertEqual(self.setup_mod.ImportDialog(self.root, self.accounts, "missing").var.get(), first)
+        self.assertEqual(self.setup_mod.ImportDialog(self.root, self.accounts).var.get(), first)
 
     def test_help_opened_from_a_dialog_belongs_to_that_dialog(self):
         """A pop-up form locks the rest of the program, so the Help window opened from it must belong to it."""

@@ -117,7 +117,7 @@ class PipelineReportsProgress(unittest.TestCase):
     def test_mbox_import_shows_a_marquee_then_a_real_count(self):
         control = self.control()
         control.progress.min_interval = 0
-        pipeline.stage_import_mbox(self.conn, self.acct, self.mbox, control)
+        pipeline.stage_import_mail(self.conn, self.acct, self.mbox, control)
         flags = [e["indeterminate"] for e in self.events]
         self.assertTrue(flags[0] or any(flags))                  # started in marquee mode ...
         self.assertFalse(self.events[-1]["indeterminate"])       # ... and ended with a real figure
@@ -125,33 +125,50 @@ class PipelineReportsProgress(unittest.TestCase):
         self.assertIn("9 of 9", self.events[-1]["detail"])
         self.assertEqual(round(self.events[-1]["overall"], 3), 1.0)
 
-    def test_full_run_walks_through_every_step_in_order(self):
-        control = self.control()
-        control.progress.min_interval = 0
-        pipeline.stage_import_mbox(self.conn, self.acct, self.mbox)
-        pipeline.run_full(self.conn, [self.acct, self.work], FakeProvider(), fetch=False, batch_size=6, control=control)
-        control.progress.finish()
+    def _labels(self):
         labels = []
         for e in self.events:
             if e["label"] and (not labels or labels[-1] != e["label"]):
                 labels.append(e["label"])
-        self.assertEqual(labels, ["Pre-filtering (free, no AI)", "Fetching email bodies",
-                                  "AI: classifying sign-ups", "AI: finding possible email changes"])
-        self.assertEqual({e["steps"] for e in self.events if e["steps"]}, {4})
+        return labels
+
+    def test_full_run_walks_through_every_step_in_order(self):
+        control = self.control()
+        control.progress.min_interval = 0
+        pipeline.stage_import_mail(self.conn, self.acct, self.mbox)
+        pipeline.run_full(self.conn, [self.acct, self.work], FakeProvider(), fetch=False, batch_size=6, control=control)
+        control.progress.finish()
+        # By default every pipeline runs, in this order.
+        self.assertEqual(self._labels(), ["Shortlisting emails (free, no AI)", "Downloading email text",
+                                          "AI: finding sign-ups", "AI: finding possible email changes",
+                                          "AI: checking closed accounts", "AI: finding subscriptions"])
+        self.assertEqual({e["steps"] for e in self.events if e["steps"]}, {6})
         values = [e["overall"] for e in self.events]
         self.assertEqual(values, sorted(values))                  # monotonic
         self.assertEqual(values[-1], 1.0)
 
-    def test_full_run_with_fetch_has_five_steps(self):
+    def test_only_the_chosen_pipelines_appear_in_the_plan(self):
+        control = self.control()
+        control.progress.min_interval = 0
+        pipeline.stage_import_mail(self.conn, self.acct, self.mbox)
+        pipeline.run_full(self.conn, [self.acct, self.work], FakeProvider(), fetch=False, batch_size=6,
+                          control=control, pipelines=["signups", "changes"])
+        control.progress.finish()
+        self.assertEqual(self._labels(), ["Shortlisting emails (free, no AI)", "Downloading email text",
+                                          "AI: finding sign-ups", "AI: finding possible email changes"])
+        self.assertEqual({e["steps"] for e in self.events if e["steps"]}, {4})
+        self.assertEqual([e["overall"] for e in self.events][-1], 1.0)
+
+    def test_full_run_with_fetch_counts_the_fetch_step(self):
         control = self.control()
         control.progress.min_interval = 0
         pipeline.run_full(self.conn, [self.acct], FakeProvider(), fetch=True, control=control)   # no password: fetch skipped
-        self.assertEqual(self.events[0]["steps"], 5)
-        self.assertIn("Fetching email headers", {e["label"] for e in self.events})
+        self.assertEqual(self.events[0]["steps"], 7)             # scan + shortlist + download text + four pipelines
+        self.assertIn("Scanning mailbox", {e["label"] for e in self.events})
 
     def test_stop_still_works_alongside_progress(self):
         control = self.control()
-        pipeline.stage_import_mbox(self.conn, self.acct, self.mbox)
+        pipeline.stage_import_mail(self.conn, self.acct, self.mbox)
         pipeline.stage_prefilter(self.conn)
         control.cancel()
         with self.assertRaises(jobcontrol.Cancelled):

@@ -106,15 +106,15 @@ class PipelineEndToEnd(unittest.TestCase):
         self.provider = FakeProvider()
 
     def run_all(self):
-        pipeline.stage_import_mbox(self.conn, self.main, self.mbox)
+        pipeline.stage_import_mail(self.conn, self.main, self.mbox)
         pipeline.stage_prefilter(self.conn)
         pipeline.stage_fetch_bodies(self.conn, self.accounts)
         pipeline.stage_classify(self.conn, self.provider, 6)
         pipeline.stage_detect_changes(self.conn, self.provider, self.accounts, 5)
 
     def test_import_and_prefilter(self):
-        self.assertEqual(pipeline.stage_import_mbox(self.conn, self.main, self.mbox), 9)
-        self.assertEqual(pipeline.stage_import_mbox(self.conn, self.main, self.mbox), 0)   # re-import is a no-op
+        self.assertEqual(pipeline.stage_import_mail(self.conn, self.main, self.mbox), 9)
+        self.assertEqual(pipeline.stage_import_mail(self.conn, self.main, self.mbox), 0)   # re-import is a no-op
         result = pipeline.stage_prefilter(self.conn)
         self.assertEqual(result["scored"], 9)
         labels = {r["subject"]: (r["prefilter_label"], r["change_candidate"]) for r in self.conn.execute("SELECT * FROM emails")}
@@ -125,13 +125,13 @@ class PipelineEndToEnd(unittest.TestCase):
         self.assertEqual(labels["Welcome to Dropbox - verify your email"][1], 0)
 
     def test_recipient_detection_incl_forwarded_old_address(self):
-        pipeline.stage_import_mbox(self.conn, self.main, self.mbox)
+        pipeline.stage_import_mail(self.conn, self.main, self.mbox)
         used = {r["subject"]: r["email_address_used"] for r in self.conn.execute("SELECT subject, email_address_used FROM emails")}
         self.assertEqual(used["Welcome to Spotify - verify your email"], "me+spotify@gmail.com")   # plus alias kept
         self.assertEqual(used["Welcome to Dropbox - verify your email"], "old@yahoo.com")          # forwarded address kept
 
     def test_mbox_rows_need_no_body_fetch(self):
-        pipeline.stage_import_mbox(self.conn, self.main, self.mbox)
+        pipeline.stage_import_mail(self.conn, self.main, self.mbox)
         pipeline.stage_prefilter(self.conn)
         self.assertEqual(db.emails_missing_body(self.conn), [])
         self.assertEqual(pipeline.stage_fetch_bodies(self.conn, self.accounts), 0)
@@ -176,7 +176,7 @@ class PipelineEndToEnd(unittest.TestCase):
             def structured_call(self, *a, **k):
                 out = super().structured_call(*a, **k)
                 return out[:1]                                              # answers only the first item
-        pipeline.stage_import_mbox(self.conn, self.main, self.mbox)
+        pipeline.stage_import_mail(self.conn, self.main, self.mbox)
         pipeline.stage_prefilter(self.conn)
         lazy = Lazy()
         pipeline.stage_classify(self.conn, lazy, 6)
@@ -185,14 +185,14 @@ class PipelineEndToEnd(unittest.TestCase):
         self.assertGreater(len(db.classified_keys(self.conn)), done)
 
     def test_max_groups_caps_a_test_run(self):
-        pipeline.stage_import_mbox(self.conn, self.main, self.mbox)
+        pipeline.stage_import_mail(self.conn, self.main, self.mbox)
         pipeline.stage_prefilter(self.conn)
         pipeline.stage_classify(self.conn, self.provider, 6, max_groups=2)
         self.assertEqual(len(db.classified_keys(self.conn)), 2)
 
     def test_cancel_stops_cleanly(self):
         from jobcontrol import Cancelled, JobControl
-        pipeline.stage_import_mbox(self.conn, self.main, self.mbox)
+        pipeline.stage_import_mail(self.conn, self.main, self.mbox)
         pipeline.stage_prefilter(self.conn)
         control = JobControl()
         control.cancel()
@@ -210,7 +210,7 @@ class ExportRules(unittest.TestCase):
         self.conn = db.open_database(None)
         acct = Account(name="gmail", provider="gmail", email="me@gmail.com")
         self.work = Account(name="work", provider="other", email="work@acme.com")
-        pipeline.stage_import_mbox(self.conn, acct, mbox)
+        pipeline.stage_import_mail(self.conn, acct, mbox)
         pipeline.stage_prefilter(self.conn)
         provider = FakeProvider()
         pipeline.stage_classify(self.conn, provider, 6)
@@ -287,14 +287,14 @@ class WriteMode(unittest.TestCase):
 
     def test_memory_only_by_default_writes_nothing(self):
         s = Session()
-        pipeline.stage_import_mbox(s.conn, self.acct, self.mbox)
+        pipeline.stage_import_mail(s.conn, self.acct, self.mbox)
         pipeline.stage_prefilter(s.conn)
         self.assertEqual(sorted(os.listdir(self.tmp)), ["mail.mbox"])
         s.close()
 
     def test_enable_copies_progress_and_resume_skips_finished_work(self):
         s = Session()
-        pipeline.stage_import_mbox(s.conn, self.acct, self.mbox)
+        pipeline.stage_import_mail(s.conn, self.acct, self.mbox)
         pipeline.stage_prefilter(s.conn)
         path = s.enable_write_mode(self.data)
         self.assertEqual(path, os.path.join(self.data, "session.db"))
@@ -314,7 +314,7 @@ class WriteMode(unittest.TestCase):
     def test_saved_file_never_contains_credentials(self):
         s = Session()
         s.upsert_account(Account(name="g", provider="gmail", email="me@gmail.com", password="HUNTER2-APP-PW"))
-        pipeline.stage_import_mbox(s.conn, self.acct, self.mbox)
+        pipeline.stage_import_mail(s.conn, self.acct, self.mbox)
         path = s.enable_write_mode(self.data)
         s.close()
         for name in os.listdir(self.data):
@@ -333,7 +333,7 @@ class WriteMode(unittest.TestCase):
 
     def test_disable_keeps_data_in_memory_and_can_delete_file(self):
         s = Session()
-        pipeline.stage_import_mbox(s.conn, self.acct, self.mbox)
+        pipeline.stage_import_mail(s.conn, self.acct, self.mbox)
         path = s.enable_write_mode(self.data)
         removed = s.disable_write_mode(delete_file=True)
         self.assertIn(path, removed)

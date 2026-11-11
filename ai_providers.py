@@ -36,6 +36,7 @@ PRIVACY NOTES
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import json
 import re
@@ -75,8 +76,18 @@ class ProviderFormatError(ProviderError):
     """The AI answered, but not in a usable shape (invalid JSON, wrong fields)."""
 
 
+class ReplyCutOff(ProviderFormatError):
+    """The AI stopped because it reached the reply-length limit (max_tokens), not because it had finished,
+    so what it sent is incomplete. Asking again with more room usually fixes this, and structured_call does
+    exactly that."""
+
+
+class ProviderLimitError(ProviderError):
+    """The server refused the reply length that was asked for because it is more than this model allows."""
+
+
 class _Retryable(Exception):
-    """Internal: a temporary failure worth retrying (rate limit, 5xx, timeout)."""
+    """Internal: a temporary failure worth retrying (rate limit, 5xx, timeout, dropped connection)."""
 
     def __init__(self, message: str, retry_after: float | None = None):
         super().__init__(message)
@@ -131,8 +142,25 @@ def privacy_summary(settings: ProviderSettings) -> tuple:
         host = "api.anthropic.com"
     else:
         host = urlparse(settings.base_url if "//" in settings.base_url else "//" + settings.base_url).hostname or "your chosen provider"
-    return "cloud", (f"Sender, subject and a short text snippet of candidate emails are sent over the "
-                     f"internet to {host}. Your API key is sent there too. Nothing else is sent.")
+    return "cloud", (f"Sender, subject and a short text snippet of the emails each chosen pipeline shortlists "
+                     f"(for receipts, also the money amounts in them) are sent over the internet to {host}. "
+                     f"Your API key is sent there too. Nothing else is sent.")
+
+
+def destination_of(settings: ProviderSettings) -> str:
+    """Where email text would be sent, as a short label that can be compared: 'api.anthropic.com', or the
+    server's 'host' / 'host:port'. The interface remembers WHICH destination a person agreed to, so pointing
+    Vestige at a different server asks again instead of riding on an answer given for another one."""
+    if settings.mode != MODE_LOCAL and settings.kind == KIND_ANTHROPIC:
+        return "api.anthropic.com"
+    raw = settings.base_url or ""
+    parsed = urlparse(raw if "//" in raw else "//" + raw)
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return f"{host}:{port}" if host and port else host
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +333,11 @@ class AIProvider:
 
     is_local = False
     MAX_ATTEMPTS = 4        # tries for temporary network/server problems
-    FORMAT_RETRIES = 2      # extra tries when the reply isn't valid JSON
+    FORMAT_RETRIES = 2      # extra tries when the reply isn't valid JSON, or was cut off
+    # Reply sizes (in tokens) tried, in turn, when a reply is cut off at the limit it was given. Steps, not
+    # doubling: 8,192 is accepted by nearly every model, so a model with a smaller maximum still gets the
+    # first retry, and only the last step can be refused.
+    TOKEN_STEPS = (8192, 16384)
 
     def __init__(self):
         self.last_usage = None          # (input_tokens, output_tokens) of the latest call, if known
@@ -344,19 +376,46 @@ class AIProvider:
                 self._sleep(wait)
                 delay *= 2
 
+    def _bigger_limit(self, limit: int):
+        """The next reply size to try after one of `limit` tokens was cut off, or None if there is none."""
+        return next((step for step in self.TOKEN_STEPS if step > limit), None)
+
     def structured_call(self, system_prompt: str, user_message: str, tool: dict,
                         essential=(), fallbacks=None, max_tokens: int = 3000) -> list:
         """Ask for structured results and return them as a validated list of
         dicts. `tool` is {"name", "description", "input_schema"} where the
         schema is {"type":"object","properties":{"results":{"type":"array",...}}}.
+
+        Two different things can go wrong with a reply, and they are handled differently:
+          * it is NOT USABLE (not valid JSON, wrong fields): ask again and say what was wrong;
+          * it was CUT OFF at the length limit (the model ran out of room, which is common with models that
+            "think" before answering): the content was fine as far as it went, so ask the same thing
+            again with more room. Asking again with the same room would only be cut off in the same place.
         """
         note = ""
         last_error = None
+        limit = max_tokens
+        previous_limit = max_tokens
         for attempt in range(self.FORMAT_RETRIES + 1):
             message = user_message + ("\n\n" + note if note else "")
             try:
-                data = self._with_retries(lambda: self._request(system_prompt, message, tool, max_tokens))
+                data = self._with_retries(lambda: self._request(system_prompt, message, tool, limit))
                 return validate_object_list(data, tool["input_schema"], essential, fallbacks)
+            except ReplyCutOff as exc:
+                last_error = exc
+                bigger = self._bigger_limit(limit)
+                if bigger is None or attempt == self.FORMAT_RETRIES:
+                    break
+                self._log(f"  the AI's reply was cut off at {limit:,} tokens; asking again with "
+                          f"room for {bigger:,} ({attempt + 1}/{self.FORMAT_RETRIES})")
+                previous_limit, limit, note = limit, bigger, ""        # nothing was wrong with the content
+            except ProviderLimitError as exc:
+                if limit == max_tokens:
+                    raise                      # the size we were told to use was refused: a real setup problem
+                # We asked for more room because a reply was cut off, and this model won't allow it.
+                last_error = exc
+                limit = previous_limit
+                break
             except ProviderFormatError as exc:
                 last_error = exc
                 if attempt < self.FORMAT_RETRIES:
@@ -365,6 +424,11 @@ class AIProvider:
                 note = (f"NOTE: your previous reply could not be used because: {exc}. "
                         f"Reply again with ONLY the JSON object that matches the schema, "
                         f"with one result for every item given, and nothing else.")
+        if isinstance(last_error, (ReplyCutOff, ProviderLimitError)):
+            raise ProviderFormatError(
+                f"The AI's reply was cut off before it finished, even with room for {limit:,} tokens. "
+                f"Use a smaller batch size so each reply is shorter (or a model that can write longer replies)."
+            )
         raise ProviderFormatError(
             f"The AI didn't return usable output after {self.FORMAT_RETRIES + 1} tries ({last_error}). "
             f"Try a smaller batch size, or a more capable model."
@@ -418,6 +482,9 @@ class AnthropicProvider(AIProvider):
         if status == 404:
             raise ProviderError(f"Anthropic says the model '{self.model}' wasn't found. "
                                 f"Check the model name.") from None
+        if status == 400 and "max_tokens" in str(exc).lower():
+            raise ProviderLimitError(f"Anthropic won't allow that reply length for '{self.model}': "
+                                     f"{str(exc)[:200]}") from None
         if status is not None and status >= 500:
             raise _Retryable(f"server error {status}") from None
         raise ProviderError(f"Anthropic returned an error: {str(exc)[:300]}") from None
@@ -443,6 +510,10 @@ class AnthropicProvider(AIProvider):
         usage = getattr(response, "usage", None)
         if usage is not None:
             self.last_usage = (getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None))
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            # Out of room part-way through the answer. The tool_use block that comes back is whatever was
+            # finished by then: using it would quietly lose every result after the cut.
+            raise ReplyCutOff("the reply was cut off before it finished (too long)")
         for block in response.content:
             if getattr(block, "type", "") == "tool_use" and block.name == tool["name"]:
                 return block.input
@@ -522,6 +593,21 @@ class OpenAICompatibleProvider(AIProvider):
                    "User-Agent": "Vestige/3"}
         return headers
 
+    # What a connection that was cut mid-conversation looks like to Python. urllib only wraps errors from
+    # the connecting/sending stage (as URLError); a server that closes the connection while we wait for the
+    # answer, or part-way through it, raises these directly. They are temporary, like a timeout.
+    _DROPPED = (http.client.HTTPException, ConnectionError)
+
+    @staticmethod
+    def _describe_drop(exc: Exception) -> str:
+        if isinstance(exc, http.client.RemoteDisconnected):
+            return "the server closed the connection without answering"
+        if isinstance(exc, http.client.IncompleteRead):
+            return "the server's reply was cut off part-way"
+        if isinstance(exc, ConnectionResetError):
+            return "the connection was reset"
+        return f"the connection was dropped ({type(exc).__name__})"
+
     def _open(self, req: urllib.request.Request):
         """Perform one HTTP call. Returns (status, text, headers) for any HTTP
         response (including errors); raises for network-level problems."""
@@ -533,9 +619,19 @@ class OpenAICompatibleProvider(AIProvider):
             with urllib.request.urlopen(req, timeout=self.timeout, context=self._ssl) as resp:
                 return resp.status, resp.read().decode("utf-8", errors="replace"), resp.headers
         except urllib.error.HTTPError as exc:
-            return exc.code, exc.read().decode("utf-8", errors="replace"), exc.headers
+            try:
+                text = exc.read().decode("utf-8", errors="replace")
+            except self._DROPPED as drop:
+                raise _Retryable(self._describe_drop(drop)) from None
+            except (socket.timeout, TimeoutError):
+                raise _Retryable("the request timed out") from None
+            return exc.code, text, exc.headers
         except urllib.error.URLError as exc:
             reason = exc.reason
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                # Waiting can't fix a certificate the computer doesn't trust (a company proxy, a wrong
+                # date on this computer), so this is reported at once instead of retried.
+                raise ProviderConnectionError(f"Secure connection failed: {reason}") from None
             if isinstance(reason, ConnectionRefusedError) or "refused" in str(reason).lower():
                 hint = (" Is your local AI running? (For Ollama, open the Ollama app or run 'ollama serve'.)"
                         if self.is_local else "")
@@ -546,7 +642,11 @@ class OpenAICompatibleProvider(AIProvider):
         except (socket.timeout, TimeoutError):
             raise _Retryable("the request timed out") from None
         except ssl.SSLError as exc:
+            if isinstance(exc, (ssl.SSLEOFError, ssl.SSLZeroReturnError)):
+                raise _Retryable("the secure connection was dropped") from None      # a drop, not a bad certificate
             raise ProviderConnectionError(f"Secure connection failed: {exc}") from None
+        except self._DROPPED as exc:
+            raise _Retryable(self._describe_drop(exc)) from None
 
     def _post(self, path: str, body: dict):
         req = urllib.request.Request(
@@ -612,6 +712,12 @@ class OpenAICompatibleProvider(AIProvider):
         return body
 
     @staticmethod
+    def _mentions_token_limit(error_text: str) -> bool:
+        lowered = error_text.lower()
+        return any(w in lowered for w in ("max_tokens", "max_completion_tokens", "context length",
+                                          "context window", "context size", "too many tokens"))
+
+    @staticmethod
     def _mentions_format(error_text: str) -> bool:
         lowered = error_text.lower()
         return any(w in lowered for w in
@@ -638,7 +744,7 @@ class OpenAICompatibleProvider(AIProvider):
         if isinstance(content, list):                       # some servers return content parts
             content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
         if choice.get("finish_reason") == "length":
-            raise ProviderFormatError("the reply was cut off before it finished (too long)")
+            raise ReplyCutOff("the reply was cut off before it finished (too long)")
         return extract_json(content or "")
 
     def _request(self, system_prompt, user_message, tool, max_tokens):
@@ -659,6 +765,8 @@ class OpenAICompatibleProvider(AIProvider):
                 self._unsupported_modes.add(mode)
                 self._log(f"  this server doesn't support '{mode}' output; using a simpler format")
                 continue
+            if status == 400 and self._mentions_token_limit(str(payload)):
+                raise ProviderLimitError(self._friendly_http_error(status, str(payload)))
             raise ProviderError(self._friendly_http_error(status, str(payload)))
         raise ProviderError("The server rejected every request format we tried.")
 
@@ -695,9 +803,9 @@ class OpenAICompatibleProvider(AIProvider):
 # Factory
 # ---------------------------------------------------------------------------
 
-def create_provider(settings: ProviderSettings, require_model: bool = True) -> AIProvider:
-    """Build the right adapter from the user's settings, with friendly errors.
-    `require_model=False` is used only by "Find models", which runs before a model is chosen."""
+def check_settings(settings: ProviderSettings, require_model: bool = True) -> None:
+    """Raise ProviderConfigError, in plain words, if something the settings need is missing. Nothing is built
+    and no connection is made, so it is cheap enough to call as the person types."""
     if settings.mode == MODE_LOCAL:
         if not settings.base_url.strip():
             raise ProviderConfigError("Enter the address of your local AI server "
@@ -705,19 +813,27 @@ def create_provider(settings: ProviderSettings, require_model: bool = True) -> A
         if require_model and not settings.model.strip():
             raise ProviderConfigError("Enter the model name your local server should use "
                                       "(use 'Find models' to see what's installed).")
-        # Local models are slow; give them much longer before giving up.
-        return OpenAICompatibleProvider(settings.base_url, settings.model, settings.api_key,
-                                        timeout=max(settings.timeout_seconds, 300), is_local=True)
-
+        return
     if not settings.api_key.strip():
         raise ProviderConfigError("Enter your API key first.")
-    if settings.kind == KIND_ANTHROPIC:
-        return AnthropicProvider(settings.api_key.strip(), settings.model.strip() or DEFAULT_ANTHROPIC_MODEL,
-                                 timeout=settings.timeout_seconds)
     if settings.kind == KIND_OPENAI:
         if require_model and not settings.model.strip():
             raise ProviderConfigError("Enter the model name from your provider's documentation "
                                       "(or use 'Find models').")
+    elif settings.kind != KIND_ANTHROPIC:
+        raise ProviderConfigError(f"Unknown provider type: {settings.kind}")
+
+
+def create_provider(settings: ProviderSettings, require_model: bool = True) -> AIProvider:
+    """Build the right adapter from the user's settings, with friendly errors.
+    `require_model=False` is used only by "Find models", which runs before a model is chosen."""
+    check_settings(settings, require_model)
+    if settings.mode == MODE_LOCAL:
+        # Local models are slow; give them much longer before giving up.
         return OpenAICompatibleProvider(settings.base_url, settings.model, settings.api_key,
-                                        timeout=settings.timeout_seconds, is_local=False)
-    raise ProviderConfigError(f"Unknown provider type: {settings.kind}")
+                                        timeout=max(settings.timeout_seconds, 300), is_local=True)
+    if settings.kind == KIND_ANTHROPIC:
+        return AnthropicProvider(settings.api_key.strip(), settings.model.strip() or DEFAULT_ANTHROPIC_MODEL,
+                                 timeout=settings.timeout_seconds)
+    return OpenAICompatibleProvider(settings.base_url, settings.model, settings.api_key,
+                                    timeout=settings.timeout_seconds, is_local=False)

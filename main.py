@@ -24,7 +24,12 @@ Typical run:
     python main.py fetch-bodies
     python main.py classify --ai anthropic
     python main.py find-changes --ai anthropic
+    python main.py check-closed --ai anthropic          # closed or deactivated accounts
+    python main.py find-subscriptions --ai anthropic    # recurring charges and their status
     python main.py export --out-dir D:\\Safe\\Exports
+
+Or run several pipelines in one go, choosing which and how deeply (see run_options.py):
+    python main.py all --skip-fetch --pipelines signups,changes --depth quick
 
 Using a local AI instead of a cloud one:
     python main.py classify --local --model llama3.1:8b
@@ -38,8 +43,10 @@ import sys
 
 import ai_providers
 import db
+import module_a_imap
 import module_d_export
 import pipeline
+import run_options
 from jobcontrol import Cancelled
 from models import (
     DEFAULT_ANTHROPIC_MODEL, DEFAULT_BATCH_CLOUD, DEFAULT_BATCH_LOCAL, KIND_ANTHROPIC, KIND_OPENAI,
@@ -77,15 +84,25 @@ def make_provider(args):
         sys.exit(str(exc))
 
 
+def since_arg(text):
+    """argparse type for --since: accepts 01-Jan-2024 or 2024-01-31 and hands on the form the mail server
+    wants. A date it can't read stops the command at once, with what to write."""
+    try:
+        return module_a_imap.parse_since(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
 def default_batch(args) -> int:
     if args.batch_size:
         return args.batch_size
     return DEFAULT_BATCH_LOCAL if args.local else DEFAULT_BATCH_CLOUD
 
 
-def load_accounts(args):
+def load_accounts(args, need_passwords: bool = True):
+    """The accounts from the config file. Only the commands that log in over IMAP need their passwords."""
     import config                      # only the CLI needs the yaml/.env loader
-    return config.load_accounts(args.config)
+    return config.load_accounts(args.config, need_passwords)
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +119,7 @@ def cmd_fetch(args, conn):
 
 
 def cmd_import_mail(args, conn):
-    account = next((a for a in load_accounts(args) if a.name == args.account), None)
+    account = next((a for a in load_accounts(args, need_passwords=False) if a.name == args.account), None)
     if not account:
         sys.exit(f"No account named '{args.account}' in {args.config}")
     try:
@@ -123,6 +140,8 @@ def cmd_prefilter_report(args, conn):
     print(f"  unscored:              {c['unscored']}")
     print(f"Candidate sender domains: {c['candidate_domains']}")
     print(f"Possible email-change notices: {c['change_notices']}")
+    print(f"Closure-style notices:   {c['closure_notices']}")
+    print(f"Billing emails:          {c['billing_emails']}")
     for label, where in (("candidate", "prefilter_label='candidate'"), ("noise", "prefilter_label='noise'")):
         print(f"\nSample of {args.n} {label} subjects"
               f"{' (check nothing real got dropped)' if label == 'noise' else ''}:")
@@ -131,17 +150,42 @@ def cmd_prefilter_report(args, conn):
             print(f"  [{r['prefilter_score']:+.1f}] {str(r['sender_domain']):30s} {r['subject']}")
 
 
+def _pipelines(args):
+    """The --pipelines choice as a tuple of keys; a typo is reported, not silently ignored."""
+    try:
+        return run_options.parse_pipeline_list(getattr(args, "pipelines", "all"))
+    except ValueError as exc:
+        sys.exit(str(exc))
+
+
+def _depth(args):
+    try:
+        return run_options.get_depth(getattr(args, "depth", None))
+    except ValueError as exc:
+        sys.exit(str(exc))
+
+
 def cmd_fetch_bodies(args, conn):
-    pipeline.stage_fetch_bodies(conn, load_accounts(args))
+    pipeline.stage_fetch_bodies(conn, load_accounts(args), pipelines=_pipelines(args), depth=_depth(args))
 
 
 def cmd_classify(args, conn):
-    pipeline.stage_classify(conn, make_provider(args), default_batch(args), args.max_domains)
+    pipeline.stage_classify(conn, make_provider(args), default_batch(args), args.max_domains, depth=_depth(args))
 
 
 def cmd_find_changes(args, conn):
-    accounts = load_accounts(args) if os.path.exists(args.config) else []
-    pipeline.stage_detect_changes(conn, make_provider(args), accounts, max(1, min(default_batch(args), 5)))
+    accounts = load_accounts(args, need_passwords=False) if os.path.exists(args.config) else []
+    pipeline.stage_detect_changes(conn, make_provider(args), accounts, max(1, min(default_batch(args), 5)),
+                                  depth=_depth(args))
+
+
+def cmd_check_closed(args, conn):
+    pipeline.stage_check_closed(conn, make_provider(args), default_batch(args), args.max_domains, depth=_depth(args))
+
+
+def cmd_find_subscriptions(args, conn):
+    pipeline.stage_find_subscriptions(conn, make_provider(args), default_batch(args), args.max_domains,
+                                      depth=_depth(args))
 
 
 def cmd_export(args, conn):
@@ -165,10 +209,12 @@ def cmd_status(args, conn):
 
 
 def cmd_all(args, conn):
+    pipelines, depth = _pipelines(args), _depth(args)       # check the choices first: a typo costs nothing
     accounts = load_accounts(args)
     provider = make_provider(args)
     pipeline.run_full(conn, accounts, provider, fetch=not args.skip_fetch, since=args.since,
-                      batch_size=default_batch(args), max_groups=args.max_domains)
+                      batch_size=default_batch(args), max_groups=args.max_domains,
+                      pipelines=pipelines, depth=depth)
     print(f"\nResults are in {args.db}. Run 'export --out-dir <folder>' to write CSV/Markdown files.")
 
 
@@ -185,7 +231,16 @@ def add_ai_options(p):
     g.add_argument("--base-url", help="API base URL (needed for openai-compatible; default for --local is Ollama)")
     g.add_argument("--model", help="Model name (required for openai-compatible and --local)")
     g.add_argument("--api-key-env", help="Name of the environment variable holding the API key")
-    g.add_argument("--batch-size", type=int, help="Groups per AI request (default 6 cloud / 2 local)")
+    g.add_argument("--batch-size", type=int, help="Senders per AI request (default 6 cloud / 2 local)")
+    g.add_argument("--depth", choices=run_options.DEPTH_NAMES + [n.lower() for n in run_options.DEPTH_NAMES],
+                   default="balanced", help="How much of each sender's mail the AI reads: quick (fewest "
+                                            "tokens), balanced (default) or thorough")
+
+
+def add_pipelines_option(p):
+    p.add_argument("--pipelines", default="all",
+                   help="Which pipelines to run, comma-separated: "
+                        + ", ".join(run_options.PIPELINE_ORDER) + " (default: all)")
 
 
 def build_parser():
@@ -196,7 +251,7 @@ def build_parser():
 
     f = sub.add_parser("fetch", help="Fetch email headers over IMAP")
     f.add_argument("--account", help="Only this account")
-    f.add_argument("--since", help="IMAP date, e.g. 01-Jan-2020")
+    f.add_argument("--since", type=since_arg, help="Only mail from this date on, e.g. 01-Jan-2020 or 2020-01-01")
     f.set_defaults(func=cmd_fetch)
 
     # "import-mail" reads .pst (Outlook / Hotmail), .mbox and .eml files or a folder of .eml
@@ -216,7 +271,12 @@ def build_parser():
     pr.add_argument("-n", type=int, default=15)
     pr.set_defaults(func=cmd_prefilter_report)
 
-    sub.add_parser("fetch-bodies", help="Fetch body snippets for candidates").set_defaults(func=cmd_fetch_bodies)
+    fb = sub.add_parser("fetch-bodies", help="Fetch body snippets for the chosen pipelines' candidates")
+    add_pipelines_option(fb)
+    fb.add_argument("--depth", choices=run_options.DEPTH_NAMES + [n.lower() for n in run_options.DEPTH_NAMES],
+                    default="balanced", help="Depth the later AI stages will use (it decides how many "
+                                             "subscription emails are downloaded)")
+    fb.set_defaults(func=cmd_fetch_bodies)
 
     cl = sub.add_parser("classify", help="AI: classify candidate senders")
     add_ai_options(cl)
@@ -226,6 +286,16 @@ def build_parser():
     fc = sub.add_parser("find-changes", help="AI: find possible email changes")
     add_ai_options(fc)
     fc.set_defaults(func=cmd_find_changes)
+
+    cc = sub.add_parser("check-closed", help="AI: find closed or deactivated accounts")
+    add_ai_options(cc)
+    cc.add_argument("--max-domains", type=int, help="Cap for a cheap test run")
+    cc.set_defaults(func=cmd_check_closed)
+
+    fs = sub.add_parser("find-subscriptions", help="AI: find subscriptions, their cost and whether they still run")
+    add_ai_options(fs)
+    fs.add_argument("--max-domains", type=int, help="Cap for a cheap test run")
+    fs.set_defaults(func=cmd_find_subscriptions)
 
     ex = sub.add_parser("export", help="Write CSV/Markdown files to a folder you choose")
     ex.add_argument("--out-dir", required=True, help="Folder to save into (no default - you choose)")
@@ -238,19 +308,35 @@ def build_parser():
 
     sub.add_parser("status", help="Row counts at each stage").set_defaults(func=cmd_status)
 
-    al = sub.add_parser("all", help="Run fetch -> prefilter -> bodies -> classify -> find-changes (no export)")
+    al = sub.add_parser("all", help="Run fetch -> prefilter -> bodies -> the chosen pipelines (no export)")
     add_ai_options(al)
-    al.add_argument("--since", help="IMAP date, e.g. 01-Jan-2020")
+    add_pipelines_option(al)
+    al.add_argument("--since", type=since_arg, help="Only mail from this date on, e.g. 01-Jan-2020 or 2020-01-01")
     al.add_argument("--skip-fetch", action="store_true", help="Skip the IMAP fetch (e.g. after an MBOX import)")
     al.add_argument("--max-domains", type=int)
     al.set_defaults(func=cmd_all)
     return p
 
 
+# Only these commands may CREATE the database file. The others work on what is already in it, and opening
+# the file for them would create an empty one just to report that there is nothing to do.
+CREATES_DATABASE = ("fetch", "import-mail", "import-mbox", "all")
+
+
+def missing_database_message(command: str, path: str):
+    """Why `command` can't run because there is no database yet, or None if it can."""
+    if command in CREATES_DATABASE or os.path.exists(path):
+        return None
+    return (f"There is no database at {os.path.abspath(path)} yet, so '{command}' has nothing to work on. "
+            f"Create one first with 'fetch' or 'import-mail' (or 'all', which does the whole run).")
+
+
 def main():
     args = build_parser().parse_args()
-    if args.command not in ("export",) or os.path.exists(args.db):
-        print(f"(The command-line tool keeps its database as a file: {os.path.abspath(args.db)})")
+    problem = missing_database_message(args.command, args.db)
+    if problem:
+        sys.exit(problem)
+    print(f"(The command-line tool keeps its database as a file: {os.path.abspath(args.db)})")
     try:
         with db.connection(args.db) as conn:
             args.func(args, conn)

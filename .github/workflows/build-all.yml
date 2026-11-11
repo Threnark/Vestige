@@ -70,8 +70,9 @@ jobs:
           # adds .pst reading) and has no ready-made package for regular Linux: pip would have
           # to compile it there, and a failure would stop the whole build. So it is installed
           # separately below, and the build carries on without it if it cannot be installed.
+          # PyInstaller (the build tool) is not in requirements.txt: it comes from requirements-build.txt.
           grep -v -i '^libpff-python' requirements.txt > requirements-ci.txt
-          python -m pip install -r requirements-ci.txt
+          python -m pip install -r requirements-ci.txt -r requirements-build.txt
 
           if python -m pip install "libpff-python>=20231205" && python -c "import pypff"; then
             echo "HAVE_PST=true" >> "$GITHUB_ENV"
@@ -108,6 +109,14 @@ jobs:
       - name: Run the security tests
         shell: bash
         run: python -m unittest tests.test_security -v
+
+      # The program's other tests (the logic that finds sign-ups, reads receipts, copes with a mail server
+      # that misbehaves, and so on). They don't depend on the operating system, so they run on one system only;
+      # a failure stops the release just like the security tests above.
+      - name: Run all the tests
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python -m unittest discover -s tests -t .
 
       - name: Build with PyInstaller
         shell: bash

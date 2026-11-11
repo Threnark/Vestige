@@ -20,8 +20,10 @@ TWO THINGS THIS MODULE DOES ON PURPOSE (both added after a real 37,000-message
 export stopped at message ~10,000 with "UnicodeDecodeError: 'ascii' codec can't
 decode byte 0xf0"):
 
-  1. Messages are read as RAW BYTES (`get_bytes`), then parsed with the `email`
-     package. The obvious alternative, iterating the mailbox object, makes the
+  1. Messages are read as RAW BYTES (`get_file`), then parsed with the `email`
+     package. Only the first MBOX_READ_BYTES of each message are read: the headers and the
+     start of the text are all that is used, and a message with a large attachment would
+     otherwise be read and parsed in full for nothing (about 3x slower on a file of such mail). The obvious alternative, iterating the mailbox object, makes the
      standard library decode each message's "From " SEPARATOR line as ASCII. Some
      exports put a non-ASCII character in that line (for example an emoji or an
      accented name in the sender part), and a single such message used to abort
@@ -40,16 +42,25 @@ import mailbox
 import os
 import sqlite3
 
-import db
 import jobcontrol
 from models import Account
-from module_a_imap import _decode_header_value, _extract_snippet, build_header_row, store_message
+from module_a_imap import (_decode_header_value, _extract_body, body_start, build_header_row,
+                           stand_in_message_id, store_message, tidy_message_id, wants_amounts)
 
+MBOX_READ_BYTES = 262144     # 256 KB per message, as for .eml files (module_a_eml.EML_READ_BYTES)
+_LINESEP = os.linesep.encode("ascii")
 COMMIT_EVERY = 500
 PROGRESS_EVERY = 5000        # how often a line is printed to the log
 PROGRESS_UI_EVERY = 100      # how often the progress bar is told (it throttles itself too)
 SKIP_DETAILS_SHOWN = 10      # how many skipped messages get their own log line (the rest are only counted)
 SKIP_NUMBERS_SHOWN = 20      # how many skipped message numbers are listed in the summary
+
+
+def _read_message_start(box, key) -> bytes:
+    """The first MBOX_READ_BYTES of one message, without its "From " separator line (never decoded: see the
+    module docstring). Line endings are treated exactly as `box.get_bytes` treats them, so the same message
+    gives the same bytes whichever way it is read, and so the same stand-in Message-ID."""
+    return box.get_file(key).read(MBOX_READ_BYTES).replace(_LINESEP, b"\n")
 
 
 def import_mbox(account: Account, mbox_path: str, conn, control=None) -> int:
@@ -81,17 +92,21 @@ def import_mbox(account: Account, mbox_path: str, conn, control=None) -> int:
 
             try:
                 # Raw bytes, NOT box[key]: see the module docstring (the separator line is never decoded).
-                msg = email.message_from_bytes(box.get_bytes(key))
+                raw = _read_message_start(box, key)
+                msg = email.message_from_bytes(raw)
+                from_raw = _decode_header_value(msg.get("From"))
+                to_raw = _decode_header_value(msg.get("To"))
+                subject = _decode_header_value(msg.get("Subject"))
+                date_raw = msg.get("Date")
                 row = build_header_row(
-                    account, "mbox", None,
-                    from_raw=_decode_header_value(msg.get("From")),
-                    to_raw=_decode_header_value(msg.get("To")),
-                    subject=_decode_header_value(msg.get("Subject")),
-                    date_raw=msg.get("Date"),
-                    message_id=msg.get("Message-ID") or f"<no-id-{account.name}-mbox-{index}>",
+                    account, "mbox", None, from_raw=from_raw, to_raw=to_raw, subject=subject, date_raw=date_raw,
+                    # No Message-ID? Build one from what the message says, NOT from its position in this
+                    # file: a position would match the first no-ID message of a different file.
+                    message_id=tidy_message_id(msg.get("Message-ID")) or stand_in_message_id(
+                        from_raw, to_raw, subject, date_raw, body_start(raw), where=f"{mbox_path}#{index}"),
                     list_unsub=msg.get("List-Unsubscribe"),
                 )
-                if store_message(conn, row, lambda msg=msg: _extract_snippet(msg)):
+                if store_message(conn, row, lambda msg=msg, row=row: _extract_body(msg, wants_amounts(row))):
                     inserted += 1
             except (jobcontrol.Cancelled, sqlite3.Error):
                 raise                       # a stop request or a database problem must still end the job

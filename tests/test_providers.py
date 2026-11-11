@@ -338,6 +338,34 @@ class FactoryAndPrivacy(unittest.TestCase):
         self.assertTrue(p.is_local)
         self.assertGreaterEqual(p.timeout, 300)
 
+    def test_check_settings_explains_what_is_missing_without_building_anything(self):
+        cases = [
+            (ProviderSettings(mode=MODE_CLOUD, kind=KIND_ANTHROPIC, api_key=""), "API key"),
+            (ProviderSettings(mode=MODE_CLOUD, kind=KIND_OPENAI, api_key="k", model=""), "model name"),
+            (ProviderSettings(mode=MODE_LOCAL, kind=KIND_OPENAI, base_url="", model="m"), "address"),
+            (ProviderSettings(mode=MODE_LOCAL, kind=KIND_OPENAI, base_url="http://localhost:11434/v1", model=""),
+             "model name"),
+        ]
+        for settings, wanted in cases:
+            with self.subTest(wanted), self.assertRaises(ai.ProviderConfigError) as raised:
+                ai.check_settings(settings)
+            self.assertIn(wanted, str(raised.exception))
+        ai.check_settings(ProviderSettings(mode=MODE_CLOUD, kind=KIND_ANTHROPIC, api_key="k"))
+        ai.check_settings(ProviderSettings(mode=MODE_LOCAL, kind=KIND_OPENAI, base_url="http://localhost:11434/v1",
+                                           model="m"))
+
+    def test_a_missing_model_is_allowed_when_only_looking_for_models(self):
+        ai.check_settings(ProviderSettings(mode=MODE_CLOUD, kind=KIND_OPENAI, api_key="k", model=""),
+                          require_model=False)
+
+    def test_create_provider_says_the_same_things_as_check_settings(self):
+        settings = ProviderSettings(mode=MODE_CLOUD, kind=KIND_ANTHROPIC, api_key="")
+        with self.assertRaises(ai.ProviderConfigError) as built:
+            ai.create_provider(settings)
+        with self.assertRaises(ai.ProviderConfigError) as checked:
+            ai.check_settings(settings)
+        self.assertEqual(str(built.exception), str(checked.exception))
+
     def test_loopback_detection(self):
         for host in ("localhost", "127.0.0.1", "::1", "[::1]", "foo.localhost"):
             self.assertTrue(ai.is_loopback_host(host), host)

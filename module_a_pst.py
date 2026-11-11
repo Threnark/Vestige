@@ -48,7 +48,8 @@ from datetime import timezone
 import jobcontrol
 from models import Account, ImportProblem
 from module_a_imap import (
-    _decode_header_value, build_header_row, snippet_from_texts, store_message,
+    STAND_IN_CONTENT_BYTES, _decode_header_value, body_from_texts, build_header_row, stand_in_message_id,
+    store_message, tidy_message_id, wants_amounts,
 )
 
 COMMIT_EVERY = 500
@@ -145,7 +146,8 @@ def _date_header(msg) -> str | None:
 
 def message_to_row(account: Account, folder_label: str, index: int, msg):
     """Return (row, snippet_function) for one PST message, or None when it has no usable
-    sender address. `index` only makes the stand-in Message-ID unique."""
+    sender address. `index` (the message's position in its folder) is used only to keep completely
+    blank messages apart: see stand_in_message_id."""
     headers_text = _text(_safe(msg, "transport_headers")).strip()
     parsed = email.message_from_string(headers_text) if headers_text else None
 
@@ -163,14 +165,21 @@ def message_to_row(account: Account, folder_label: str, index: int, msg):
 
     subject = header("Subject") or _text(_safe(msg, "subject")).strip()
     date_raw = (parsed.get("Date") if parsed is not None else None) or _date_header(msg)
-    message_id = (parsed.get("Message-ID") if parsed is not None else None) \
-        or f"<no-id-{account.name}-pst-{folder_label}-{index}>"
+    message_id = tidy_message_id(parsed.get("Message-ID") if parsed is not None else None)
+    if not message_id:
+        # Common in Outlook data files: mail inside an Exchange organisation has no internet headers at
+        # all. Build the ID from what the message says (not from its folder or position), so the same
+        # message gives the same ID in any export and a re-import adds nothing.
+        content = _text(_safe(msg, "plain_text_body")).strip() or _text(_safe(msg, "html_body")).strip()
+        message_id = stand_in_message_id(from_raw, header("To"), subject, date_raw,
+                                         content[:STAND_IN_CONTENT_BYTES], where=f"{folder_label}#{index}")
     row = build_header_row(account, f"pst:{folder_label}", None, from_raw=from_raw, to_raw=header("To"),
                            subject=subject, date_raw=date_raw, message_id=message_id,
                            list_unsub=header("List-Unsubscribe") or None)
 
-    def snippet() -> str:
-        return snippet_from_texts(_text(_safe(msg, "plain_text_body")), _text(_safe(msg, "html_body")))
+    def snippet():
+        return body_from_texts(_text(_safe(msg, "plain_text_body")), _text(_safe(msg, "html_body")),
+                               wants_amounts(row))
     return row, snippet
 
 

@@ -7,8 +7,8 @@ Vestige - find the accounts your inbox remembers. Desktop application.
 Built with CustomTkinter in a dark, purple look (see ui_theme.py). The window is
 this file; each page lives in its own module:
 
-    gui_setup.py    Setup        storage (write mode) / AI provider / email accounts
-    gui_run.py      Run Pipeline options, stage buttons, progress bar, live log
+    gui_setup.py    Setup        storage (write mode) / AI provider / email accounts and mail-file import
+    gui_run.py      Run Pipeline IMAP and AI options, stage buttons, progress bar, live log
     gui_results.py  Results      tables, possible email changes, export
 
 PRIVACY MODEL (what the app enforces)
@@ -90,9 +90,11 @@ class App(ctk.CTk):
 
         self.session = Session()                         # memory only; see session.py
         self.busy = False
+        self.stoppable = False                           # busy with something the Stop button can interrupt?
         self.control: JobControl | None = None
         self.gui_queue: "queue.Queue" = queue.Queue()
-        self._exported_counts = (0, 0)                   # what had been exported at the last export
+        self._ui_problems = 0                            # window updates that failed (see _poll)
+        self._exported_counts = (0, 0, 0, 0)             # what had been exported at the last export
 
         header = ctk.CTkFrame(self, fg_color="transparent")          # the tab bar, with the Help button at its right
         header.pack(fill="x", padx=10, pady=(10, 4))
@@ -131,6 +133,11 @@ class App(ctk.CTk):
             else:
                 page.pack_forget()
 
+    def show_run_page(self) -> None:
+        """Switch to Run Pipeline: a job started from another tab (a mail-file import) shows its progress there."""
+        self.tabs.set(PAGES[1])
+        self.show_page(PAGES[1])
+
     # ---- plumbing --------------------------------------------------------------------------
     def log(self, message: str) -> None:
         """Thread-safe: may be called from a job thread."""
@@ -140,18 +147,51 @@ class App(ctk.CTk):
         """Thread-safe: called by the job thread whenever progress changes."""
         self.gui_queue.put(lambda: self.run_page.show_progress(snapshot))
 
-    def set_busy(self, busy: bool) -> None:
+    def set_busy(self, busy: bool, stoppable: bool = True) -> None:
+        """`stoppable` is False for work the Stop button can't interrupt (an export): the button then stays
+        greyed out instead of offering to stop something it can't."""
         self.busy = busy
-        self.run_page.set_busy_state(busy)
+        self.stoppable = busy and stoppable
+        self.run_page.set_busy_state(busy, stoppable)
         self.results_page.set_busy_state(busy)
 
+    UI_PROBLEMS_SHOWN = 5
+
     def _poll(self) -> None:
+        """Run the window updates the job thread has queued, then look again in 100 ms.
+
+        Looking again is in a `finally`, and each update has its own try: an update that raises (a widget
+        that no longer exists, say) must never stop this loop. When it did, the log and progress bar froze,
+        the "job finished" step never ran and the window stayed "busy" for ever, with no message at all.
+        Now the failure is reported in the log and everything else still runs."""
         try:
             while True:
-                self.gui_queue.get_nowait()()
-        except queue.Empty:
-            pass
-        self.after(100, self._poll)
+                try:
+                    update = self.gui_queue.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    update()
+                except Exception as exc:
+                    self._note_ui_problem(exc)
+        finally:
+            self.after(100, self._poll)
+
+    def _note_ui_problem(self, exc: Exception) -> None:
+        """Say in the log that a window update failed. Only the first few are listed, so one update that fails
+        on every tick can't fill the log."""
+        self._ui_problems += 1
+        if self._ui_problems > self.UI_PROBLEMS_SHOWN + 1:
+            return
+        if self._ui_problems == self.UI_PROBLEMS_SHOWN + 1:
+            message = "(more window updates failed; they are not listed one by one)"
+        else:
+            where = error_location(exc)
+            message = f"(a window update failed: {type(exc).__name__}: {exc}" + (f"; where: {where}" if where else "") + ")"
+        try:
+            self.run_page.append_log(message)
+        except Exception:
+            pass                                         # the log itself is what failed: nothing more to do
 
     def run_job(self, fn) -> None:
         """Run fn(control) in a background thread, capturing print() into the log and
@@ -160,7 +200,7 @@ class App(ctk.CTk):
             dialogs.showwarning("Busy", "A job is already running. Wait for it to finish, or press Stop.")
             return
         self.set_busy(True)
-        self.control = JobControl(listener=self._on_progress)
+        control = self.control = JobControl(listener=self._on_progress)
         self.run_page.reset_progress()
         self.run_page.append_log("")
 
@@ -169,7 +209,7 @@ class App(ctk.CTk):
             sys.stdout = QueueWriter(self.log)
             outcome = "finished"
             try:
-                fn(self.control)
+                fn(control)
             except Cancelled:
                 outcome = "stopped"
                 print("Stopped. Everything finished so far is kept.")
@@ -184,7 +224,7 @@ class App(ctk.CTk):
                     print(f"  where: {where}")
                     print("  (If you report this, please include the two lines above. They contain no email content.)")
             else:
-                self.control.progress.finish()
+                control.progress.finish()
                 print("--- finished ---")
             finally:
                 sys.stdout.flush()
@@ -194,23 +234,33 @@ class App(ctk.CTk):
 
     def _job_finished(self, outcome: str) -> None:
         self.set_busy(False)                             # first: the UI may read the database again
-        self.run_page.end_progress(outcome)
-        self.run_page.refresh_status()
+        self.control = None                              # the finished job's control must not be "stopped" later
+        for step in (lambda: self.run_page.end_progress(outcome), self.run_page.refresh_status,
+                     self.setup_page.refresh_next_step):
+            try:
+                step()
+            except Exception as exc:                     # one part failing must not skip the others
+                self._note_ui_problem(exc)
 
     def request_stop(self) -> None:
-        if self.control is not None:
-            self.control.cancel()
-            self.run_page.append_log("Stop requested - finishing the current step...")
+        """Ask the running job to stop at its next safe point. Does nothing unless a job that CAN be stopped is
+        running: an export can't be, and after a job ends there is nothing left to stop."""
+        if not (self.busy and self.stoppable and self.control is not None):
+            return
+        self.control.cancel()
+        self.run_page.append_log("Stop requested - finishing the current step...")
 
     def after_data_replaced(self) -> None:
         """The database changed under us (e.g. a saved session was resumed)."""
         self.setup_page.refresh_storage_status()
+        self.setup_page.refresh_next_step()
         self.run_page.refresh_status()
 
     # ---- unexported-results tracking ---------------------------------------------------------
     def _result_counts(self) -> tuple:
         c = db.counts(self.session.conn)
-        return c["confirmed_signups"], c["email_changes_found"]
+        return (c["confirmed_signups"], c["email_changes_found"], c["closed_accounts_found"],
+                c["subscriptions_found"])
 
     def mark_exported(self) -> None:
         self._exported_counts = self._result_counts()
@@ -258,7 +308,7 @@ class App(ctk.CTk):
             try:
                 current = self._result_counts()
             except Exception:                            # e.g. a job thread still holds the database
-                current = (0, 0)
+                current = (0, 0, 0, 0)
             if any(current) and current != self._exported_counts:
                 if not dialogs.askyesno(
                         "Close without exporting?",

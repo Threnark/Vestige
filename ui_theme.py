@@ -54,6 +54,10 @@ TEXT_DISABLED = "#7d7885"
 CHECK_BORDER = "#666c71"   # check box / radio outline
 ACCENT = "#8f6c97"         # the purple from the app icon: progress fill, ticked boxes
 ACCENT_HOVER = "#a07fa8"
+CARD = "#2f2b36"           # section panels: lighter than PANEL, so PANEL-coloured controls (depth switch) show on them
+
+# Row colours in the Results tables (always paired with words, so colour is never the only cue).
+ROW_COLORS = {"good": "#6fcf97", "warn": "#e0b04b", "dim": "#9a97a3"}
 
 # Privacy line colours, brightened for a dark background.
 PRIVACY_COLORS = {"local": "#6fcf97", "lan": "#e0b04b", "cloud": "#e0b04b", "remote": "#ff7b72"}
@@ -173,6 +177,20 @@ def frame(parent, **kw):
     return ctk.CTkFrame(parent, **kw)
 
 
+CARD_NOTE = {"small": True, "muted": True, "bg": CARD}      # how a wrapped note is drawn on a card (see `paragraph`)
+
+
+def card(parent):
+    """A rounded panel that sets one section of a page apart from the next. Returns (panel, inner): grid
+    the panel, and build the section's widgets in `inner`, which carries the padding. A `paragraph` placed
+    on it needs bg=CARD, because it is a plain Tk label and cannot be transparent."""
+    panel = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=8)
+    panel.grid_columnconfigure(0, weight=1)
+    inner = frame(panel)
+    inner.grid(row=0, column=0, sticky="ew", padx=16, pady=12)
+    return panel, inner
+
+
 def heading(parent, text: str):
     return ctk.CTkLabel(parent, text=text, font=F.heading, text_color=TEXT, anchor="w", justify="left")
 
@@ -273,10 +291,57 @@ def scrollbar(parent, command):
     return ctk.CTkScrollbar(parent, command=command, button_color=SCROLL, button_hover_color=SCROLL_HOVER)
 
 
-def scroll_area(parent, height: int = 80):
-    """A small scrolling list area (used for the per-account tick boxes)."""
-    return ctk.CTkScrollableFrame(parent, height=height, corner_radius=CORNER, fg_color=TABLE_BG,
-                                  scrollbar_button_color=SCROLL, scrollbar_button_hover_color=SCROLL_HOVER)
+def hscrollbar(parent, command):
+    """A horizontal scrollbar in the same colours (used under wide tables)."""
+    return ctk.CTkScrollbar(parent, command=command, orientation="horizontal",
+                            button_color=SCROLL, button_hover_color=SCROLL_HOVER)
+
+
+def contain_wheel(textbox) -> None:
+    """Make the mouse wheel scroll THIS text box and nothing else.
+
+    Why: the Run Pipeline page scrolls as a whole, and the scrolling frame listens for the mouse
+    wheel everywhere inside it. Without this, wheeling over the log would scroll the log AND the
+    page at the same time, so the page would jump away from the log you are reading. The handler
+    scrolls the log itself and then tells Tk not to pass the event on ("break")."""
+    inner = getattr(textbox, "_textbox", textbox)
+
+    def on_wheel(event):
+        number = getattr(event, "num", None)
+        if number == 4:                                   # Linux: wheel up
+            lines = -3
+        elif number == 5:                                 # Linux: wheel down
+            lines = 3
+        else:                                             # Windows / macOS: the sign of delta is the direction
+            delta = getattr(event, "delta", 0)
+            lines = -3 if delta > 0 else 3 if delta < 0 else 0
+        if lines:
+            try:
+                inner.yview_scroll(lines, "units")
+            except tk.TclError:
+                pass
+        return "break"
+
+    for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        try:
+            textbox.bind(sequence, on_wheel)
+        except (tk.TclError, ValueError):
+            pass
+
+
+def grip(parent, text: str = "\u2022 \u2022 \u2022    drag to resize    \u2022 \u2022 \u2022"):
+    """A thin bar to drag up and down, used to resize the log. The caller binds the mouse to it
+    (see RunPage). It lights up on hover, and the pointer changes to a vertical resize arrow."""
+    kw = {"cursor": "sb_v_double_arrow"}
+    try:
+        bar = ctk.CTkLabel(parent, text=text, height=18, corner_radius=CORNER, fg_color=BUTTON,
+                           text_color=TEXT_MUTED, font=F.small, **kw)
+    except (TypeError, ValueError, tk.TclError):         # a CustomTkinter without the cursor option
+        bar = ctk.CTkLabel(parent, text=text, height=18, corner_radius=CORNER, fg_color=BUTTON,
+                           text_color=TEXT_MUTED, font=F.small)
+    bar.bind("<Enter>", lambda _e: bar.configure(fg_color=BUTTON_HOVER))
+    bar.bind("<Leave>", lambda _e: bar.configure(fg_color=BUTTON))
+    return bar
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +463,20 @@ def table(parent, columns: tuple, headings: dict, widths: dict, height: int = 8)
         tree.heading(col, text=headings[col], anchor="w")
         tree.column(col, width=metrics.scaled(widths.get(col, 110), F.scale), anchor="w")
     bar = scrollbar(container, tree.yview)
-    tree.configure(yscrollcommand=bar.set)
-    tree.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=8)
+    bar.configure(height=1)                              # a CTkScrollbar asks for 200px; the grid stretches it
+    hbar = hscrollbar(container, tree.xview)
+
+    def on_xscroll(first, last):
+        """Drive the horizontal bar, and hide it while every column already fits."""
+        hbar.set(first, last)
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            hbar.grid_remove()
+        else:
+            hbar.grid()
+
+    tree.configure(yscrollcommand=bar.set, xscrollcommand=on_xscroll)
+    tree.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=(8, 2))
     bar.grid(row=0, column=1, sticky="ns", padx=(2, 6), pady=8)
+    hbar.grid(row=1, column=0, sticky="ew", padx=(8, 0), pady=(0, 6))
+    hbar.grid_remove()                                   # shown only when the table is wider than the window
     return container, tree

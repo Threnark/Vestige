@@ -116,21 +116,29 @@ class ContentStructure(unittest.TestCase):
 class ContentMatchesTheProgram(unittest.TestCase):
     def test_run_pipeline_buttons_exist_with_these_names(self):
         run = source("gui_run.py")
-        for label in (content.BTN_FETCH, content.BTN_IMPORT, content.BTN_PREFILTER, content.BTN_BODIES,
+        for label in (content.BTN_FETCH, content.BTN_PREFILTER, content.BTN_BODIES,
                       content.BTN_CLASSIFY, content.BTN_CHANGES, content.BTN_FULL, content.BTN_STOP):
             self.assertIn(f'"{label}"', run.replace("\\u25b6  ", "").replace("\\u25a0  ", ""),
                           f"button {label!r} not found in gui_run.py")
 
+    def test_the_import_button_is_on_the_setup_page_and_not_on_the_run_page(self):
+        self.assertIn(f'"{content.BTN_IMPORT}"', source("gui_setup.py"))
+        self.assertNotIn(f'"{content.BTN_IMPORT}"', source("gui_run.py"))
+
     def test_interface_names_quoted_in_the_help_exist(self):
         """Every field, button and option the help mentions by name is really in the interface."""
         wanted = {
-            "gui_run.py": ["Limit AI to N groups", "Full pipeline starts with an IMAP fetch", "Only mail since",
-                           "Groups per AI request", "Select all", "Refresh status", "Choose file(s)...",
-                           "Choose a folder of .eml..."],
+            "gui_run.py": ["Fetch mail from your accounts", "What to run", "AI requests", "Depth:",
+                           "Run selected pipelines", "Individual steps", "Test run: check only N senders",
+                           "Fetch new mail first", "Only mail since", "Senders per AI request", "Select all",
+                           "Refresh status"],
             "gui_setup.py": ["Add account", "Test connection", "Find models", "API Key", "App password",
                              "Cloud AI (API key)", "Local AI (runs on this computer)", "AI provider",
-                             "Write Mode", "Folders", "IMAP server", "IMAP port"],
-            "gui_results.py": ["Export now", "Minimum confidence", "Refresh", "Browse...",
+                             "Write Mode", "Folders", "IMAP server", "IMAP port", "Choose file(s)...",
+                             "Choose a folder of .eml..."],
+            "gui_results.py": ["Closed accounts", "Subscriptions", "Account check", "Activity hint", "Check result",
+                               "Later mail", "Per month", "Email Address Used",
+                               "Export now", "Minimum AI confidence", "Refresh", "Browse...",
                                "Add date & time to file names", "Put files in a new dated sub-folder"],
         }
         for filename, phrases in wanted.items():
@@ -140,15 +148,15 @@ class ContentMatchesTheProgram(unittest.TestCase):
 
     def test_help_text_mentions_the_names_it_depends_on(self):
         everything = " ".join(" ".join(block_strings(t)) for t in content.TOPICS.values())
-        for phrase in ("Limit AI to N groups", "Full pipeline starts with an IMAP fetch", "Only mail since",
-                       "Groups per AI request", "Test connection", "Find models", "Export now",
-                       "Minimum confidence"):
+        for phrase in ("Test run: check only N senders", "Fetch new mail first", "Only mail since",
+                       "Senders per AI request", "Test connection", "Find models", "Export now",
+                       "Minimum AI confidence"):
             self.assertIn(phrase, everything)
 
     def test_numbers_and_names_come_from_the_code(self):
         ai = " ".join(block_strings(content.AI))
         pipeline = " ".join(block_strings(content.PIPELINE))
-        self.assertIn(f"{DEFAULT_BATCH_LOCAL} groups per request instead of {DEFAULT_BATCH_CLOUD}", ai)
+        self.assertIn(f"{DEFAULT_BATCH_LOCAL} senders per request instead of {DEFAULT_BATCH_CLOUD}", ai)
         self.assertIn(f"{DEFAULT_BATCH_CLOUD} for cloud AI and {DEFAULT_BATCH_LOCAL} for local AI", pipeline)
         for name in content.CLOUD_PROVIDER_NAMES + content.LOCAL_PROVIDER_NAMES:
             self.assertIn(name, ai)
@@ -228,11 +236,11 @@ class HelpButtonsPointAtRealPages(unittest.TestCase):
         self.fail("PAGE_HELP_TOPICS not found in gui_app.py")
 
     def test_dialog_topic_functions_return_real_topics(self):
-        # gui_run.ImportDialog._help_topic returns one of these two literals
-        run = source("gui_run.py")
-        for topic_id in re.findall(r'return "(\w+)" if chosen', run) + re.findall(r'else "(\w+)"\n', run):
+        # gui_setup.ImportDialog._help_topic returns one of these two literals
+        setup = source("gui_setup.py")
+        for topic_id in re.findall(r'return "(\w+)" if chosen', setup) + re.findall(r'else "(\w+)"\n', setup):
             self.assertIn(topic_id, content.TOPICS)
-        self.assertIn('"microsoft" if chosen is not None and chosen.is_microsoft else "pipeline"', run)
+        self.assertIn('"microsoft" if chosen is not None and chosen.is_microsoft else "start"', setup)
 
 
 class HelpWindow(unittest.TestCase):

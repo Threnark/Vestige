@@ -1,8 +1,9 @@
 """
 gui_setup.py
 ------------
-The Setup page: where you choose how Vestige stores things, which AI it uses and
-which email accounts it reads. Mirrors the first page of the concept design.
+The Setup page: where you choose how Vestige stores things, which AI it uses, which email
+accounts it reads and, for accounts used without a password, which exported mail files to
+import. Mirrors the first page of the concept design.
 
 Nothing on this page is ever saved to disk. Account passwords, the AI API key and
 local-AI addresses live in memory only (see session.py). The only file this page
@@ -15,12 +16,14 @@ from __future__ import annotations
 import os
 import threading
 import tkinter as tk
+from tkinter import filedialog
 
 import customtkinter as ctk
 
 import ai_providers as ai
 import db
 import paths
+import pipeline
 import help_content
 import ui_dialogs as dialogs
 import ui_help as help_ui
@@ -138,8 +141,8 @@ class AccountDialog(ctk.CTkToplevel):
             self.pw_hint.configure(
                 fg=theme.PRIVACY_COLORS["lan"],
                 text="Microsoft blocks passwords for Outlook / Hotmail / Live over IMAP, so no password is "
-                     "needed (or possible). Import your exported .pst file instead: Run Pipeline > "
-                     "1. Import mail file.")
+                     "needed (or possible). Save this account, then import your exported .pst file with "
+                     "Import mail file... on the Setup tab.")
         else:
             self.pw_entry.configure(state="normal")
             self.pw_hint.configure(fg=theme.TEXT_MUTED,
@@ -182,6 +185,73 @@ class AccountDialog(ctk.CTkToplevel):
 
 
 # ---------------------------------------------------------------------------
+# Import mail from a file
+# ---------------------------------------------------------------------------
+
+class ImportDialog(ctk.CTkToplevel):
+    """Small modal for importing exported mail: pick which account the mail belongs to (`selected`
+    is offered first), then choose what to import. Sets self.result to (account_name, [paths]) or
+    leaves it None if cancelled. The choice of file/folder happens here so one dialog does it all."""
+
+    FILE_TYPES = [("Mail exports (.pst .mbox .eml)", ("*.pst", "*.mbox", "*.mbx", "*.eml")),
+                  ("Outlook data file (.pst)", "*.pst"), ("MBOX file", ("*.mbox", "*.mbx")),
+                  ("Email messages (.eml)", "*.eml"), ("All files", "*.*")]
+
+    def __init__(self, parent, accounts: list, selected: str | None = None):
+        super().__init__(parent, fg_color=theme.BG)
+        self.accounts = accounts                  # Account objects (the [?] button needs to know if one is Microsoft)
+        names = [a.name for a in accounts]
+        self.title("Import mail from a file")
+        self.resizable(False, False)
+        self.result = None
+        theme.paragraph(self, "Which account is this mail from?\n(Used only to work out which of your "
+                              "addresses each email was sent to.)", wraplength=420).pack(padx=24, pady=(20, 8), anchor="w")
+        self.var = tk.StringVar(value=selected if selected in names else names[0])
+        theme.option_menu(self, names, self.var, width=260).pack(padx=24, anchor="w")
+        theme.paragraph(self, "What do you have?\n"
+                              "\u2022 Outlook / Hotmail / Live: the .pst file exported from Outlook\n"
+                              "\u2022 Gmail Takeout or Thunderbird: a .mbox file\n"
+                              "\u2022 Individual emails: .eml files, or a folder of them",
+                        small=True, muted=True, wraplength=420).pack(padx=24, pady=(14, 4), anchor="w")
+        row = theme.frame(self)
+        row.pack(padx=24, pady=(10, 4), anchor="w")
+        theme.button(row, "Choose file(s)...", self._pick_files, width=200).pack(side="left", padx=(0, 10))
+        theme.button(row, "Choose a folder of .eml...", self._pick_folder, width=200).pack(side="left")
+        bottom = theme.frame(self)
+        bottom.pack(padx=24, pady=(10, 20), anchor="e")
+        help_ui.button(bottom, self._help_topic).pack(side="left", padx=(0, 12))
+        theme.button(bottom, "Cancel", self.destroy, width=90).pack(side="left")
+        self.after(250, lambda: theme.apply_icon(self))
+        self.update_idletasks()
+        self.transient(parent.winfo_toplevel())
+        try:
+            self.wait_visibility()
+            self.grab_set()
+        except tk.TclError:
+            pass
+        self.wait_window()
+
+    def _help_topic(self) -> str:
+        """The [?] here explains importing: the Outlook/Hotmail page if the chosen account is a Microsoft
+        one (that is where the .pst export steps are), otherwise the Getting started page."""
+        chosen = next((a for a in self.accounts if a.name == self.var.get()), None)
+        return "microsoft" if chosen is not None and chosen.is_microsoft else "start"
+
+    def _finish(self, chosen) -> None:
+        if chosen:
+            self.result = (self.var.get(), [str(p) for p in chosen])
+            self.destroy()
+
+    def _pick_files(self) -> None:
+        self._finish(filedialog.askopenfilenames(parent=self, title="Select the mail file(s)",
+                                                 filetypes=self.FILE_TYPES))
+
+    def _pick_folder(self) -> None:
+        folder = filedialog.askdirectory(parent=self, title="Select the folder that contains the .eml files")
+        self._finish([folder] if folder else [])
+
+
+# ---------------------------------------------------------------------------
 # The page
 # ---------------------------------------------------------------------------
 
@@ -191,40 +261,80 @@ class SetupPage(ctk.CTkFrame):
         self.app = app
         self._wrapped: list = []            # labels whose wrap width follows the window
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)         # the accounts section takes any spare height
+        self.grid_rowconfigure(0, weight=1)         # the scrolling body takes the whole page
 
-        banner = theme.paragraph(self, "Nothing on this tab is saved. Accounts, passwords, API keys and server "
-                                       "addresses are held in memory only and are forgotten when you close the app.",
-                                 small=True)
+        self.body = theme.page_scroll(self)
+        self.body.grid(row=0, column=0, sticky="nsew")
+        self.body.grid_columnconfigure(0, weight=1)
+
+        banner = theme.paragraph(self.body, "Nothing on this tab is saved. Accounts, passwords, API keys and server "
+                                            "addresses are held in memory only and are forgotten when you close the "
+                                            "app.", small=True)
         banner.grid(row=0, column=0, sticky="ew", padx=20, pady=(8, 4))
         self._wrapped.append(banner)
 
-        self._build_storage()
+        # Top to bottom: what to do next, the two things everyone needs (accounts, then the AI), and the
+        # optional storage setting. The AI is built before the accounts only because refreshing the accounts
+        # also refreshes the next-step line, which reads the AI fields.
+        self.next_step_var = tk.StringVar()
+        self._build_next_step()
         self._build_ai()
         self._build_accounts()
+        self._build_storage()
         self.bind("<Configure>", self._rewrap)
 
     def _rewrap(self, event=None) -> None:
         width = getattr(event, "width", 0) or self.winfo_width()
         for lbl in self._wrapped:
-            lbl.configure(wraplength=max(300, width - 60))
+            lbl.configure(wraplength=max(300, width - 110))      # the margins and card padding take the rest
+
+    # ---- the next step ------------------------------------------------------------------------
+    def _build_next_step(self) -> None:
+        card, box = theme.card(self.body)
+        card.grid(row=1, column=0, sticky="ew", padx=20, pady=(4, 0))
+        self.next_step_label = theme.label(box, textvariable=self.next_step_var)
+        self.next_step_label.grid(row=0, column=0, sticky="w")
+
+    def _next_step(self) -> tuple:
+        """(sentence, ready): what to do next, judged from what is set up so far."""
+        accounts = self.app.session.accounts
+        if not accounts:
+            return "Next step: add an email account.", False
+        try:
+            ai.check_settings(self.get_provider_settings())
+        except ai.ProviderError as exc:
+            return f"Next step: set up the AI. {exc}", False
+        emails = db.counts(self.app.session.conn)["total_emails"]
+        if emails:
+            return f"Ready: {emails:,} emails loaded. Go to the Run Pipeline tab to start.", True
+        if any(a.has_password for a in accounts):
+            return "Ready. Go to the Run Pipeline tab: it will fetch your mail first.", True
+        return "Next step: import a mail file for your account, using \u201cImport mail file...\u201d below.", False
+
+    def refresh_next_step(self) -> None:
+        if self.app.busy:                              # the database is in use by the running job
+            return
+        text, ready = self._next_step()
+        self.next_step_var.set(text)
+        self.next_step_label.configure(text_color=theme.ROW_COLORS["good"] if ready else theme.TEXT)
 
     # ---- storage / write mode ---------------------------------------------------
     def _build_storage(self) -> None:
-        box = theme.frame(self)
-        box.grid(row=1, column=0, sticky="ew", padx=20, pady=(4, 8))
+        card, box = theme.card(self.body)
+        card.grid(row=4, column=0, sticky="ew", padx=20, pady=(10, 14))
         box.grid_columnconfigure(0, weight=1)
-        help_ui.heading(box, "Storage", "privacy").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        help_ui.heading(box, "Storage (optional)", "privacy").grid(row=0, column=0, columnspan=2, sticky="w",
+                                                                   pady=(0, 4))
         self.write_mode_var = tk.BooleanVar(value=False)
         theme.checkbox(box, "Write Mode: save scan progress to a file so a crash or accidental close "
                             "doesn't lose it.", self.write_mode_var, self._toggle_write_mode, width=680).grid(
             row=1, column=0, columnspan=2, sticky="w")
         self.storage_status_var = tk.StringVar()
-        status = theme.paragraph(box, textvariable=self.storage_status_var, small=True)
-        status.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        status = theme.paragraph(box, textvariable=self.storage_status_var, small=True, bg=theme.CARD)
+        status.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self._wrapped.append(status)
         buttons = theme.frame(box)
-        buttons.grid(row=2, column=1, sticky="e", pady=(4, 0))
+        buttons.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
         theme.button(buttons, "Delete saved data", self._delete_saved, width=140).pack(side="left", padx=(0, 10))
         theme.button(buttons, "Open Data Folder", self._open_data_folder, width=140).pack(side="left")
         self.refresh_storage_status()
@@ -343,21 +453,22 @@ class SetupPage(ctk.CTkFrame):
 
     # ---- AI provider --------------------------------------------------------------
     def _build_ai(self) -> None:
-        box = theme.frame(self)
-        box.grid(row=2, column=0, sticky="ew", padx=20, pady=(4, 8))
-        help_ui.heading(box, "AI provider (used to judge which emails are real sign-ups)", "ai").grid(
-            row=0, column=0, sticky="w", pady=(0, 4))
+        card, box = theme.card(self.body)
+        card.grid(row=3, column=0, sticky="ew", padx=20, pady=(10, 0))
+        help_ui.heading(box, "AI provider", "ai").grid(row=0, column=0, sticky="w")
+        theme.label(box, "Used to judge the emails Vestige shortlists (sign-ups, email changes, closed accounts, "
+                         "subscriptions).", small=True, muted=True).grid(row=1, column=0, sticky="w", pady=(2, 6))
 
         self.mode_var = tk.StringVar(value=MODE_CLOUD)
         modes = theme.frame(box)
-        modes.grid(row=1, column=0, sticky="w")
+        modes.grid(row=2, column=0, sticky="w")
         theme.radio(modes, "Cloud AI (API key)", self.mode_var, MODE_CLOUD, self._on_mode_change).pack(
             side="left", padx=(0, 22))
         theme.radio(modes, "Local AI (runs on this computer)", self.mode_var, MODE_LOCAL,
                     self._on_mode_change).pack(side="left")
 
         form = theme.frame(box)
-        form.grid(row=2, column=0, sticky="w", padx=(120, 0), pady=(8, 0))
+        form.grid(row=3, column=0, sticky="w", padx=(120, 0), pady=(8, 0))
 
         def label(r: int, text: str):
             lbl = theme.label(form, text, anchor="e")
@@ -397,11 +508,11 @@ class SetupPage(ctk.CTkFrame):
         theme.button(form, "Test connection", self._test_connection, width=130).grid(
             row=4, column=1, sticky="w", pady=(6, 0))
         self.test_status_var = tk.StringVar()
-        status = theme.paragraph(form, textvariable=self.test_status_var, small=True, wraplength=420)
+        status = theme.paragraph(form, textvariable=self.test_status_var, small=True, wraplength=420, bg=theme.CARD)
         status.grid(row=4, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
 
-        self.privacy_label = theme.paragraph(box, "", small=True)
-        self.privacy_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
+        self.privacy_label = theme.paragraph(box, "", small=True, bg=theme.CARD)
+        self.privacy_label.grid(row=4, column=0, sticky="w", pady=(8, 0))
         self._wrapped.append(self.privacy_label)
 
         for var in (self.base_url_var, self.model_var, self.key_var):
@@ -446,6 +557,7 @@ class SetupPage(ctk.CTkFrame):
     def _update_privacy(self) -> None:
         level, text = ai.privacy_summary(self.get_provider_settings())
         self.privacy_label.configure(text=text, fg=theme.PRIVACY_COLORS.get(level, theme.TEXT_MUTED))
+        self.refresh_next_step()                       # the AI fields changed: so may what to do next
 
     def _background(self, work, done) -> None:
         """Run `work()` off the main thread; hand its result to `done(result)` on the main thread."""
@@ -494,24 +606,28 @@ class SetupPage(ctk.CTkFrame):
 
     # ---- accounts -----------------------------------------------------------------------
     def _build_accounts(self) -> None:
-        box = theme.frame(self)
-        box.grid(row=3, column=0, sticky="nsew", padx=20, pady=(4, 14))
+        card, box = theme.card(self.body)
+        card.grid(row=2, column=0, sticky="ew", padx=20, pady=(10, 0))
         box.grid_columnconfigure(0, weight=1)
-        box.grid_rowconfigure(1, weight=1)
-        help_ui.heading(box, "Email Accounts (as many as you like)", "start").grid(row=0, column=0, columnspan=2,
-                                                                                 sticky="w", pady=(0, 6))
+        help_ui.heading(box, "Email accounts", "start").grid(row=0, column=0, columnspan=2, sticky="w")
+        theme.label(box, "Add as many as you like.", small=True, muted=True).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(2, 6))
         columns = ("name", "provider", "email", "access")
         container, self.tree = theme.table(
             box, columns, {"name": "Nickname", "provider": "Provider", "email": "Emails", "access": "Can fetch via"},
             {"name": 140, "provider": 90, "email": 260, "access": 170}, height=3)
-        container.grid(row=1, column=0, sticky="nsew")
+        container.grid(row=2, column=0, sticky="ew")
         side = theme.frame(box)
-        side.grid(row=1, column=1, sticky="n", padx=(12, 0))
+        side.grid(row=2, column=1, sticky="n", padx=(12, 0))
         theme.button(side, "Add account", self._add_account, width=140).pack(pady=(0, 8))
         theme.button(side, "Edit selected", self._edit_account, width=140).pack(pady=(0, 8))
         theme.button(side, "Remove selected", self._remove_account, width=140).pack(pady=(0, 14))
-        theme.paragraph(side, "No Password?\nYou can still import a\n.pst, .mbox or .eml\nfile. (Outlook and\nHotmail need this.)",
-                        small=True, wraplength=150).pack(anchor="w")
+        theme.button(side, "Import mail file...", self._import_mail, width=140).pack()
+        note = theme.paragraph(box, "No password? You can still import a .pst, .mbox or .eml file with \u201cImport mail "
+                                    "file...\u201d. (Outlook and Hotmail accounts need this.)", small=True,
+                               bg=theme.CARD)
+        note.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self._wrapped.append(note)
         self.refresh_accounts()
 
     def refresh_accounts(self) -> None:
@@ -520,6 +636,8 @@ class SetupPage(ctk.CTkFrame):
         for a in self.app.session.accounts:
             self.tree.insert("", "end", iid=a.name, values=(
                 a.name, a.provider, a.email, "IMAP or file import" if a.has_password else "File import only"))
+        self.tree.configure(height=max(3, min(8, len(self.app.session.accounts))))   # the page scrolls, not the table
+        self.refresh_next_step()
 
     def _after_account_change(self) -> None:
         self.refresh_accounts()
@@ -548,3 +666,24 @@ class SetupPage(ctk.CTkFrame):
                                     f"Nothing is deleted from your mailbox."):
             self.app.session.remove_account(sel[0])
             self._after_account_change()
+
+    def _import_mail(self) -> None:
+        """Import exported mail for an account. The job's progress and log are on the Run Pipeline page,
+        so the app switches there once the files are chosen."""
+        accounts = list(self.app.session.accounts)
+        if not accounts:
+            dialogs.showinfo("Add an account first", "Click \u201cAdd account\u201d first. Its email address is used to "
+                             "work out which address each email was sent to. No password is needed to import a file.")
+            return
+        if self.app.busy:
+            dialogs.showwarning("Busy", "Wait for the running job to finish first.")
+            return
+        selected = self.tree.selection()
+        picked = ImportDialog(self, accounts, selected[0] if selected else None).result
+        if not picked:
+            return
+        name, files = picked
+        account = next(a for a in accounts if a.name == name)
+        conn = self.app.session.conn
+        self.app.show_run_page()
+        self.app.run_job(lambda control: pipeline.stage_import_mail(conn, account, files, control))

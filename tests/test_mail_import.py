@@ -197,7 +197,10 @@ class PstImport(unittest.TestCase):
         self.assertEqual(notion["sender_email"], "team@mail.notion.so")
         self.assertEqual(notion["sender_domain"], "mail.notion.so")
         self.assertEqual(notion["date_iso"], "2021-07-02T10:00:00+00:00")
-        self.assertTrue(notion["message_id"].startswith("<no-id-hotmail-pst-"))
+        # no Message-ID: the stand-in is built from what the message says, not from its folder or position
+        self.assertTrue(notion["message_id"].startswith("<no-id-"))
+        self.assertNotIn("hotmail", notion["message_id"])
+        self.assertNotIn("Inbox", notion["message_id"])
 
     def test_reimport_adds_nothing(self):
         pst_mod.import_pst(ME, self.path, self.conn)
@@ -316,7 +319,7 @@ class FileImport(unittest.TestCase):
         box.flush()
         box.close()
         self.assertEqual(files.import_mail(ME, path, self.conn), 1)
-        self.assertEqual(pipeline.stage_import_mbox(self.conn, ME, path), 0)       # the old name still works
+        self.assertEqual(pipeline.stage_import_mail(self.conn, ME, path), 0)       # the old name still works
 
     def test_several_sources_in_one_go(self):
         mbox = os.path.join(self.tmp, "x.mbox")

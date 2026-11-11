@@ -23,7 +23,10 @@ import sys
 from models import DEFAULT_FOLDERS, KNOWN_IMAP_HOSTS, Account, is_microsoft_mail
 
 
-def load_accounts(config_path: str = "accounts.yaml") -> list:
+def load_accounts(config_path: str = "accounts.yaml", need_passwords: bool = True) -> list:
+    """The accounts in the config file. `need_passwords` is True for commands that log in over IMAP; the ones
+    that don't (importing a file, finding email changes) only need each account's name and address, so an
+    account whose password variable isn't set is fine for them."""
     import yaml                              # imported here: only the CLI needs these two
     from dotenv import load_dotenv
 
@@ -51,7 +54,7 @@ def load_accounts(config_path: str = "accounts.yaml") -> list:
                   file=sys.stderr)
         elif password_env:
             password = os.environ.get(password_env, "")
-            if not password:
+            if not password and need_passwords:
                 sys.exit(f"Account '{name}' expects the environment variable {password_env}, "
                          f"but it isn't set.")
 

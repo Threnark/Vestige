@@ -60,7 +60,7 @@ MICROSOFT_PASSWORD_NOTE = (
     "and Vestige keeps nothing on disk, so it cannot do that sign-in for you.\n\n"
     "Use an exported mail file instead. Export your mailbox to a .pst file with Outlook "
     "(File > Open & Export > Import/Export > Export to a file > Outlook Data File), then use "
-    "Run Pipeline > 1. Import mail file. No password is needed.")
+    "Import mail file... on the Setup tab. No password is needed.")
 
 
 def is_microsoft_mail(email: str = "", server: str = "") -> bool:
