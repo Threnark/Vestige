@@ -578,8 +578,6 @@ private to their owner on macOS and Linux.
   receipt looks like a missed payment. Amounts are only found in text, not in images, and each currency is
   totalled separately.
 * **Depth trades cost for thoroughness.** Quick can miss an unusual email; Thorough sends the most text.
-* **The new interface layout hasn't been checked by the automated tests on a real screen**, only wired up
-  against a stand-in for Tk (see [Tests](#tests)). If something looks cut off, please open an issue with a screenshot.
 * Python can't guarantee it wipes secrets from RAM (see [Memory](#memory-ram)).
 * **The interface depends on CustomTkinter**, a third-party library whose releases have been infrequent
   (5.2.2 in January 2024, then 6.0.0 in June 2026), so check that it is still maintained before relying on it
